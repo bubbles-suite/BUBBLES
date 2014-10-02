@@ -1,5 +1,5 @@
-BioNano-cgMD
-============
+.:BioNano-cgMD:.
+================
 
 BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of tools designed to simulate the interactions and kinetics of Nanoparticles in biological enviornments such as aqueous solutions containing proteins.
 
@@ -29,6 +29,27 @@ BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of 
 The documentation for this project is not ready yet and will be available in a future
 
 # Installation
+
+Just download the project package and uncompress it.
+Inside the project root directory:
+```
+cd src/
+./compile.sh
+cd ..
+```
+If the compilation is succesful, a binary with the name *mdgpu_np* should have been created
+
+# Running the code
+
+Run the executable followed by the configuration data file
+```
+./mdgpu_np setup.dat
+```
+Running the simulation in background, unattached from the user:
+```
+nohup ./mdgpu_np setup.dat &
+```
+
 
 # Quick guide
 
