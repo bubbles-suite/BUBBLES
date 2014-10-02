@@ -64,6 +64,22 @@ Alternatively, run the simulation in background, unattached from the user:
 $ nohup ./mdgpu_np setup.dat &
 ```
 
+## Using VMD to visualize the trajectories
+
+The program creates trajectories with periodic snapshots of the simulation in the plaintext format **\*.xyz**
+which can be visualized on-the-fly with **VMD**. This software is a powerful visualization tool freely available for download at <a href="http://www.ks.uiuc.edu/Research/vmd/">http://www.ks.uiuc.edu/Research/vmd/</a>
+
+Enter the directory **Utils**, and execute VMD:
+```
+$ cd Utils/
+$ vmd
+```
+
+In the VMD Main window go to `>File>Load Viasualization State...`. Load one of the vmd scripts inside the Utils directory, these scripts are pre-configured to visualize a system of 3 proteins:
++ viewstate.vmd: shows a trajectory in linear time, which is more suitable for visualizing long-time dynamics
++ viewstateLog.vmd: shows a trajectory in logarithmic time, which is more suitable for visualizing the dynamics at early time-steps
+
+
 # Examples
 
 ## Running a simulation with one kind of proteins
