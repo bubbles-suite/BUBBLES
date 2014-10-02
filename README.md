@@ -64,7 +64,7 @@ Alternatively, run the simulation in background, unattached from the user:
 $ nohup ./mdgpu_np setup.dat &
 ```
 
-## Using VMD to visualize the trajectories
+## Using VMD to visualize snapshots and trajectories
 
 The program creates trajectories with periodic snapshots of the simulation in the plaintext format **\*.xyz**
 which can be visualized on-the-fly with **VMD**. This software is a powerful visualization tool freely available for download at <a href="http://www.ks.uiuc.edu/Research/vmd/">http://www.ks.uiuc.edu/Research/vmd/</a>
