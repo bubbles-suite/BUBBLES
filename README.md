@@ -25,34 +25,38 @@ BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of 
 
 # Installation
 
-First make sure that the your system is running a CUDA-capable device 
-(check it on https://developer.nvidia.com/cuda-gpus)
+First check that the system is running a CUDA-enabled device: https://developer.nvidia.com/cuda-gpus
 
-Install the propietary drivers of nVidia and the CUDA toolkit:
+Install the nVidia propietary drivers and the CUDA toolkit:
 http://docs.nvidia.com/cuda/cuda-getting-started-guide-for-linux/
 
 To compile the code just download the project package and uncompress it.
 Inside the project main directory run the following in a terminal:
 ```
-cd src/
-./compile.sh
-cd ..
+$ cd src/
+$ ./compile.sh
+$ cd .. 
 ```
-If the compilation is succesful, a binary with the name **mdgpu_np** should have been created
-
-# Running the code
-
-Run the executable followed by the configuration data file
-```
-./mdgpu_np setup.dat
-```
-Alternatively, run the simulation in background, unattached from the user:
-```
-nohup ./mdgpu_np setup.dat &
-```
+If the compilation ends succesfully, a binary with the name **mdgpu_np** should have been created
 
 # Quick guide
 
+## Creating the initial configuration of a simulation
+
+Edit the configuration script **genConfig.py** and run it:
+`$ ./genConfig.py`
+or alternatively
+`$ python genConfig.py`
+
+This will create a file called **init.dat** inside the directory **config** which is the input of the simulation.
+
+## Running the simulation
+
+Edit the simulation setup file called **setup.dat**
+Run the executable followed by the configuration data file
+`$ ./mdgpu_np setup.dat`
+Alternatively, run the simulation in background, unattached from the user:
+`$ nohup ./mdgpu_np setup.dat &`
 
 # Examples
 
