@@ -1,17 +1,16 @@
 .:BioNano-cgMD:.
 ================
 
-BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of tools designed to simulate the interactions and kinetics of Nanoparticles in biological enviornments such as aqueous solutions containing proteins.
-
-
+BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of tools designed to simulate the interactions and kinetics of Nanoparticles in biological enviornments of aqueous solutions containing proteins.
 
 # Features
 
 + Supporting CUDA-capable devices (nVidia)
-+ Molecular Dynamics
++ Implicit solvent Molecular Dynamics
 + Berendsen thermostat for equilibration
 + Langevin thermostat for dynamics
-+ Tabulated Potentials involving 2-body and 3-body interactions
++ DLVO interaction potentials for colloidal particles
++ Tabulated potentials involving 2-body and 3-body interactions
 + Concentration control algorithms
 + Up to 1 Nanoparticle in simulation box
 + Up to 3 kinds of different proteins
@@ -25,13 +24,12 @@ BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of 
 
 # Installation
 
-First check that the system is running a CUDA-enabled device: https://developer.nvidia.com/cuda-gpus
-
-Install the nVidia propietary drivers and the CUDA toolkit:
+First check that the system is running a CUDA-enabled device: https://developer.nvidia.com/cuda-gpus.
+Next, install the nVidia propietary drivers and the CUDA toolkit:
 http://docs.nvidia.com/cuda/cuda-getting-started-guide-for-linux/
 
-To compile the code just download the project package and uncompress it.
-Inside the project main directory run the following in a terminal:
+Download the project package and uncompress it.
+Inside the project main directory, run the following in a terminal:
 ```
 $ cd src/
 $ ./compile.sh
@@ -68,6 +66,9 @@ $ nohup ./mdgpu_np setup.dat &
 
 # Examples
 
+## Running a simulation with one kind of proteins
+
+## Running a simulation with multiple kinds of proteins
 
 # Documentation
 
