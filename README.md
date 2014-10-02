@@ -23,21 +23,22 @@ BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of 
 + Patchy Nanoparticles and proteins
 + Proteins defined as groups of beads
 
-
-# Documentation
-
-The documentation for this project is not ready yet and will be available in a future
-
 # Installation
 
-Just download the project package and uncompress it.
-Inside the project root directory:
+First make sure that the your system is running a CUDA-capable device 
+(check it on https://developer.nvidia.com/cuda-gpus)
+
+Install the propietary drivers of nVidia and the CUDA toolkit:
+http://docs.nvidia.com/cuda/cuda-getting-started-guide-for-linux/
+
+To compile the code just download the project package and uncompress it.
+Inside the project main directory run the following in a terminal:
 ```
 cd src/
 ./compile.sh
 cd ..
 ```
-If the compilation is succesful, a binary with the name *mdgpu_np* should have been created
+If the compilation is succesful, a binary with the name **mdgpu_np** should have been created
 
 # Running the code
 
@@ -45,12 +46,19 @@ Run the executable followed by the configuration data file
 ```
 ./mdgpu_np setup.dat
 ```
-Running the simulation in background, unattached from the user:
+Alternatively, run the simulation in background, unattached from the user:
 ```
 nohup ./mdgpu_np setup.dat &
 ```
 
-
 # Quick guide
 
+
 # Examples
+
+
+# Documentation
+
+The documentation for this project is not ready yet and will be available in a future
+
+
