@@ -44,9 +44,13 @@ If the compilation ends succesfully, a binary with the name **mdgpu_np** should 
 ## Creating the initial configuration of a simulation
 
 Edit the configuration script **genConfig.py** and run it:
-`$ ./genConfig.py`
+``` 
+$ ./genConfig.py
+```
 or alternatively
-`$ python genConfig.py`
+```
+$ python genConfig.py
+```
 
 This will create a file called **init.dat** inside the directory **config** which is the input of the simulation.
 
@@ -54,9 +58,13 @@ This will create a file called **init.dat** inside the directory **config** whic
 
 Edit the simulation setup file called **setup.dat**
 Run the executable followed by the configuration data file
-`$ ./mdgpu_np setup.dat`
+```
+$ ./mdgpu_np setup.dat
+```
 Alternatively, run the simulation in background, unattached from the user:
-`$ nohup ./mdgpu_np setup.dat &`
+```
+$ nohup ./mdgpu_np setup.dat &
+```
 
 # Examples
 
