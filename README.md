@@ -5,7 +5,7 @@ BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of 
 
 # Features
 
-+ Supporting CUDA-capable devices (nVidia)
++ Supporting CUDA-capable devices (nVidia GPU's)
 + Implicit solvent Molecular Dynamics
 + Berendsen thermostat for equilibration
 + Langevin thermostat for dynamics
@@ -20,7 +20,8 @@ BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of 
 + Arbitrary number of Nanoparticles
 + Arbitrary number of kinds of proteins
 + Patchy Nanoparticles and proteins
-+ Proteins defined as groups of beads
++ Higher detail protein models
++ Input custom effective potentials (tabulated)
 
 # Installation
 
