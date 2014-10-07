@@ -1,7 +1,7 @@
-.:BioNano-cgMD:.
+.:BuBbLeS:.
 ================
 
-BioNano-cgMD (Biological Nanoscale coarse-grain Molecular Dynamics) is a set of tools designed to simulate the interactions and kinetics of Nanoparticles in biological enviornments of aqueous solutions containing proteins.
+BuBbLeS (BuBbLeS is a User-friendly Bio-nano Bundle for Large-scale Efficient Simulations) is a set of tools designed to simulate the interactions and kinetics of Nanoparticles in biological enviornments of aqueous solutions containing proteins.
 
 # Features
 
