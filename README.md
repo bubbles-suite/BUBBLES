@@ -1,7 +1,7 @@
 .:BUBBLES:.
 ================
 
-BUBBLES (BUBBLES is a User-friendly Bio-nano Bundle for Large-scale Efficient Simulations) is a set of tools designed to simulate the interactions and kinetics of Nanoparticles in biological enviornments of aqueous solutions containing proteins.
+BUBBLES ("BUBBLES is a User-friendly Bio-nano Bundle for Large-scale Efficient Simulations") is a set of tools designed to simulate the interactions and kinetics of Nanoparticles in biological enviornments of aqueous solutions containing proteins.
 
 # Features
 
