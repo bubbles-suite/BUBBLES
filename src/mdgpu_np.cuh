@@ -22,6 +22,7 @@
 //#define DLVO_EDL_ENERGY 1.501f
 
 #define ALPHA .4f
+#define K 50.f
 //#define BETA  10.0f
 
 
@@ -206,7 +207,7 @@ unsigned char * dev_neigmax;
 /// Flag que avisa de quan cal recalcular la llista de verlet
 unsigned int * dev_newlist;
 
-int n0_0, n1_0, n2_0, n0_t, n1_t, n2_t, n0_ads, n1_ads, n2_ads, n0_soft1, n1_soft1, n2_soft1, n0_soft2, n1_soft2, n2_soft2;
+int n0_0, n1_0, n2_0, n0_t, n1_t, n2_t, n0_ads, n1_ads, n2_ads, n0_hard, n1_hard, n2_hard, n0_soft1, n1_soft1, n2_soft1, n0_soft2, n1_soft2, n2_soft2;
 
 int nstopped;
 

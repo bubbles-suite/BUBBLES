@@ -24,7 +24,8 @@ int main ( int argc, char * argv[] )
 	snprintf(filename, sizeof(filename), "%s%s%d%s", root, "results/movie/movie_run", restartIndex, ".xyz");
 	movie1 = fopen(filename,"w");
 	snprintf(filename, sizeof(filename), "%s%s", root, "results/movie/movie.xyz");
-	movie2 = fopen(filename,"w");
+	if(restart) movie2 = fopen(filename,"a");    /// open in append mode
+	else        movie2 = fopen(filename,"w");    /// open in overwrite mode
 	
 	if (movie1 == NULL || movie2 == NULL) {
 		printf("Error: file movie.xyz could not be opened.\n");
@@ -1388,11 +1389,15 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 			
 			/// Attractive interaction force, depends on the distances of i and j to te NP center
 			/// Symmetric part
-			float expo = pow(dev_R[typei]*dev_R[typej]/(di.w*dj.w), ALPHA);
+			//float expo = pow(dev_R[typei]*dev_R[typej]/(di.w*dj.w), ALPHA);
+			float expo = exp(-di.w*dj.w/(K*K));
 			
-			pair_force_symm += -expo * tex1Dfetch(tableF_att_symm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			pair_force_symm += expo * tex1Dfetch(tableF_att_symm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			
 			/// Non-symmetric part
-			pair_force_asymm = expo/di.w * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			//pair_force_asymm = expo/di.w * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			
+			pair_force_asymm = - expo*dj.w/(K*K) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
 #endif
 		
 		/// Compute the acceleration in each direction
@@ -1874,7 +1879,7 @@ void util_calcPPForceTable (void)
 	  {
 		float w   = (R[t1]+R[t2])*0.25f;
 		float eps = -sqrt(EpsProt[t1]*EpsProt[t2]);
-		float d   = (R[t1] + R[t2]);
+		float d   = 1.1*(R[t1] + R[t2]);
 		float D   = Rs[t1] + Rs[t2];
 		
 		
@@ -1892,9 +1897,10 @@ void util_calcPPForceTable (void)
 				
 				tableF_rep[index] = 24 * pow(d/r,24) / (r*r) + 2. * 30. / (r * d * pow(2*cosh(0.5 * 30 * (r - D)/d), 2));
 				
-				tableF_att_symm[index] = eps * (r - 1.1*d) / (w*w) * exp(-pow(r - 1.1*d,2)/(2*w*w)) / r;
+				//tableF_att_symm[index] = eps * (r - 1.1*d) / (w*w) * exp(-pow(r - 1.1*d,2)/(2*w*w)) / r;
+				tableF_att_symm[index] = -eps * (r - d)/(w*w) * exp(-pow(r - d,2)/(2*w*w)) / r;
 				
-				tableF_att_noSymm[index] = ALPHA * eps * exp(-pow(r - 1.1*d,2)/(2*w*w));
+				tableF_att_noSymm[index] = -eps * exp(-pow(r - d,2)/(2*w*w));
 			}
 			else
 				tableU_rep[index] = tableF_rep[index] = tableF_att_symm[index] = tableF_att_noSymm[index] = 0.;
@@ -3188,6 +3194,7 @@ int util_countAdsorbed(void)
 	
 	memset(nAds, 0, sizeof(nAds));
 	
+	n0_hard = n1_hard = n2_hard = 0;
 	n0_soft1 = n1_soft1 = n2_soft1 = 0;
 	n0_soft2 = n1_soft2 = n2_soft2 = 0;
 	n0_t    = n1_t    = n2_t    = 0;
@@ -3216,7 +3223,14 @@ int util_countAdsorbed(void)
 		r = sqrt(rx*rx + ry*ry + rz*rz) - R_NP;
 		
 		if(r < rHC)          /// Proteins in the hard corona
-			++ nAds[typei];
+		{
+			if(typei == 0)
+				++ n0_hard;
+			else if(typei == 1)
+				++ n1_hard;
+			else if(typei == 2)
+				++ n2_hard;
+		}
 		
 		else if(r < rSC1) {    /// Proteins in the soft corona
 			if(typei == 0)
@@ -3235,6 +3249,10 @@ int util_countAdsorbed(void)
 				++ n2_soft2;
 		}
 	}
+	
+	nAds[0] = n0_hard + n0_soft1 + n0_soft2;
+	nAds[1] = n1_hard + n1_soft1 + n1_soft2;
+	nAds[2] = n2_hard + n2_soft1 + n2_soft2;
 	
 	return nAds[0] + nAds[1] + nAds[2];
 }
@@ -3376,9 +3394,9 @@ void util_setBuffer_Equil(void) {
 	double VSys = pow(0.8*L, 3);
 	
 	/// Count the equivalent BULK concentration in SIMULATION box 
-	cSys[0] = nInner[0] / VSys;
-	cSys[1] = nInner[1] / VSys;
-	cSys[2] = nInner[2] / VSys;
+	cSys[0] = (nInner[0]) / VSys;
+	cSys[1] = (nInner[1]) / VSys;
+	cSys[2] = (nInner[2]) / VSys;
 	
 	int delta[3];
 	
@@ -3514,12 +3532,12 @@ void util_fractionBound (double t) {
 // TODO: MODIFY THIS FUNCTION TO BE SCALABLE TO NTYPES OF PROTEINS
 void util_printAdsorbed(double t, FILE * file) 
 {
-	fprintf(file,"%e\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",t,nAds[0],nAds[1],nAds[2],n0_soft1,n1_soft1,n2_soft1,n0_soft2,n1_soft2,n2_soft2);
+	fprintf(file,"%e\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",t,n0_hard,n1_hard,n2_hard,n0_soft1,n1_soft1,n2_soft1,n0_soft2,n1_soft2,n2_soft2);
 	fflush(file);
 	
 	if(verbose) {
 		printf("Total:         %d\t%d\t%d\n", n0_t,    n1_t,    n2_t   );
-		printf("Hard Corona:   %d\t%d\t%d\n", nAds[0],  nAds[1],  nAds[2] );
+		printf("Hard Corona:   %d\t%d\t%d\n", n0_hard,  n1_hard,  n2_hard );
 		printf("Soft Corona 1: %d\t%d\t%d\n", n0_soft1, n1_soft1, n2_soft1);
 		printf("Soft Corona 2: %d\t%d\t%d\n", n0_soft2, n1_soft2, n2_soft2);
 	}
