@@ -9,11 +9,10 @@
 #include <sys/time.h>
 #include "mdgpu_np.cuh"
 
-double util_gaussianRandom (double mu, double sig);
-
 int main ( int argc, char * argv[] ) 
 {
-	initialize(argc, argv);        /// initialize simulation
+	/// initialize simulation
+	initialize(argc, argv);
 	
 	if(verbose)
 		printf("Starting simulation with %d particles\n", N);
@@ -22,12 +21,13 @@ int main ( int argc, char * argv[] )
 	FILE * movie1, * movie2;
 	char filename[100];
 	snprintf(filename, sizeof(filename), "%s%s%d%s", root, "results/movie/movie_run", restartIndex, ".xyz");
-	movie1 = fopen(filename,"w");
+	//movie1 = fopen(filename,"w");
 	snprintf(filename, sizeof(filename), "%s%s", root, "results/movie/movie.xyz");
 	if(restart) movie2 = fopen(filename,"a");    /// open in append mode
 	else        movie2 = fopen(filename,"w");    /// open in overwrite mode
 	
-	if (movie1 == NULL || movie2 == NULL) {
+	//if (movie1 == NULL || movie2 == NULL) {
+	if (movie2 == NULL) {
 		printf("Error: file movie.xyz could not be opened.\n");
 		exit(1);
 	}
@@ -98,21 +98,21 @@ int main ( int argc, char * argv[] )
 	
 	printf("Stop time: %ld\n", longestStopTime);
 	
-	printf("Stop mol 1: %d\n", (stopTimeMol[0] > 0 ? 1 : 0));
-	printf("Stop mol 2: %d\n", (stopTimeMol[1] > 0 ? 1 : 0));
-	printf("Stop mol 3: %d\n", (stopTimeMol[2] > 0 ? 1 : 0));
+	for(int typei = 0; typei < ntypes; ++typei) 
+		printf("Stop mol %d: %s\n", typei, (stopTimeMol[typei] > 0 ? "True" : "False"));
 	
-	printf("Stop mol time 1: %d\n", stopTimeMol[0]);
-	printf("Stop mol time 2: %d\n", stopTimeMol[1]);
-	printf("Stop mol time 3: %d\n", stopTimeMol[2]);
+	for(int typei = 0; typei < ntypes; ++typei)
+		printf("Stop time mol %d: %ld\n", typei, stopTimeMol[typei]);
 	
 	////////////////// SIMULATION STARTS HERE //////////////////////////
 	
 	util_applyBufferConditions();
 	util_countInside();
-	util_setBuffer_Equil();
+	//util_setBuffer_Equil();
+	util_setBuffer();
 	
-	if(!restart) {  /// First check if we are restarting from a previous run or not
+	/// First check if we are restarting from a previous run or not
+	if(!restart) {
 		/// Add the first frame with the initial configuration to the movie file
 		util_addXYZframe(movieLog);    
 		util_addXYZframe(movie2); 
@@ -125,19 +125,27 @@ int main ( int argc, char * argv[] )
 		////////////////// FAST EQUILIBRATE INIT CONFIG ////////////////////
 		
 		/** Run the simulation for a number of steps of equilibration, without adsorption */
-		for (t = 0; t < berendsenTime; ++t) {
-			/// Integrator with Berendsen thermostat to set T0 rapidly
-			verlet_integrateBerendsenNVT(); 
+		//for (t = 0; t < berendsenTime; ++t) {
+		for (t = 0; t < equilTime; ++t) {
+			/// OLD: Integrator with Berendsen thermostat to set T0 rapidly
+			//verlet_integrateBerendsenNVT(); 
+			verlet_integrateLangevinNVTequil();
 			
-			if(t % thermoSteps == 0) {    /// Write to file periodically
-				CudaSafeCall(cudaMemcpy( &T, dev_T, sizeof(double), cudaMemcpyDeviceToHost ));
+			if(t % thermoSteps == 0) {
 				
-				Ekin = 0.5*kb*T*dim*N;
+				/// Compute the thermodynamic quantities periodically
+				/// Integrator + thermostat
+				/// TODO: write new kernels that compute the virial and potential energy
+				
+				thermo_computeTemperature();
+				
+				Ekin = T * (kb * dim * N) * 0.5;
 				
 				if(verbose)
-					printf("Step %lu Config \t Etot %1.4f Epot %1.4f Ekin %1.4f P %1.4f T %1.4f\n",t,Etot/N,Epot/N,Ekin/N,P,T);
+					printf("Step %lu Config \t Etot %1.4f Epot %1.4f Ekin %1.4f P %1.4f T %1.4f\n",abs(t),Etot/N,Epot/N,Ekin/N,P,T);
 				
-				fprintf(timeseries,"%lf %f\n",t*dt - berendsenTime*dt,T);
+				fprintf(timeseries,"%lf %f\n",t*dt,T);
+				
 			}
 			
 			if(t % (keepRatioPeriod/10) == 0) {
@@ -151,7 +159,8 @@ int main ( int argc, char * argv[] )
 				
 				util_countAdsorbed();
 				util_countInside();
-				util_setBuffer_Equil();
+				//util_setBuffer_Equil();
+				util_setBuffer();
 			}
 		}
 		
@@ -160,7 +169,8 @@ int main ( int argc, char * argv[] )
 		fflush(timeseries);
 		
 		/// Period of Verlet List updates, no need to check maximum displacements anymore. Take a 60% for security
-		updateVerletListPeriod = berendsenTime * .66 / verletlistcount;
+		//updateVerletListPeriod = berendsenTime * .66 / verletlistcount;
+		updateVerletListPeriod = equilTime * .66 / verletlistcount;
 		if(verbose)
 			printf("Verlet list computed %d times. Update period is: %d\n",verletlistcount,updateVerletListPeriod);
 	}
@@ -259,26 +269,13 @@ int main ( int argc, char * argv[] )
 			for(int typei = 0; typei < ntypes; ++typei) {
 				if(stopTimeMol[typei] > 0 && stopTimeMol[typei] == t) {
 					
-					CudaSafeCall(cudaMemcpy (Vel, dev_Vel, N*sizeof(float4), cudaMemcpyDeviceToHost));
-					
-					for(int i = 0; i < N; ++i) 
-						if(type[i] == typei) {
-							stopMol[i] = 0;
-							
-							double Mi = M[typei];
-							
-							Vel[i].x = util_gaussianRandom(0,1) * sqrt(kb*Tinit/Mi);
-							Vel[i].y = util_gaussianRandom(0,1) * sqrt(kb*Tinit/Mi);
-							Vel[i].z = util_gaussianRandom(0,1) * sqrt(kb*Tinit/Mi);
-						}
-					
-					CudaSafeCall(cudaMemcpy( dev_stopMol,  stopMol,  N*sizeof(int),   cudaMemcpyHostToDevice));
-					CudaSafeCall(cudaMemcpy (dev_Vel, Vel, N*sizeof(float4), cudaMemcpyHostToDevice));
+					//CudaSafeCall(cudaMemcpy( dev_stopMol,  stopMol,  N*sizeof(int),   cudaMemcpyHostToDevice));
 					
 					offsetTime = t;
 					logscale = 1.4;
 					computeLogScale = (long int)(offsetTime + logscale + 0.5);
 					
+					nTot[typei] = nRef[typei];
 				}
 			}
 		}
@@ -366,8 +363,13 @@ int main ( int argc, char * argv[] )
 			if(!restart) {
 				cudaMemcpy (Image, dev_Image, N*sizeof(int4), cudaMemcpyDeviceToHost);
 				
-				float msd[3] = {0.,0.,0.};
-				int num[3] = {0,0,0};
+				float msd[ntypes];
+				int num[ntypes];
+				
+				for(int typei = 0; typei < ntypes; ++typei) {
+					msd[typei] = 0.;
+					num[typei] = 0;
+				}
 				
 				for(int i=0; i < N; ++i) {
 					float dx = fabs(Coord[i].x + Image[i].x*Lx - CoordIni[i].x);
@@ -379,11 +381,13 @@ int main ( int argc, char * argv[] )
 					num[type[i]] ++;
 				}
 				
-				msd[0] /= num[0];
-				msd[1] /= num[1];
-				msd[2] /= num[2];
+				for(int typei = 0; typei < ntypes; ++typei)
+					msd[typei] /= num[typei];
 				
-				fprintf(msdFile,"%lf\t%lf\t%lf\t%lf\n", (t-offsetTime+1)*dt, msd[0], msd[1], msd[2]);
+				fprintf(msdFile,"%lf\t", (t-offsetTime+1)*dt);
+				for(int typei = 0; typei < ntypes; ++typei)
+					fprintf(msdFile,"%lf\t",msd[typei]);
+				fprintf(msdFile,"\n");
 				fflush(msdFile);
 			}
 			
@@ -439,7 +443,7 @@ int main ( int argc, char * argv[] )
 	util_calcPrintRdf(countRdf); 
 	
 	/// Free memory and close files
-	fclose(movie1);
+	//fclose(movie1);
 	fclose(movie2);
 	fclose(adsorption);
 	fclose(timeseries);
@@ -457,22 +461,27 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 	unsigned char * nlist, 
 	int N) 
 {
-	extern __shared__ float4 sPos[];          /// allocate shared memory
+	/// allocate shared memory
+	extern __shared__ float4 sPos[];
     
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
     /** CONSTRAINT: threadIdMax must be a multiple of blockDim,
      * otherwise __synchthread() can not work! */
-	float4 tPos = dPos[idx];               /// save reference particle position in register
+	/// save reference particle position in register
+	float4 tPos = dPos[idx];               
 	
-	unsigned char neig = 0;                /// initialize the number of neighbors of reference particle
+	/// initialize the number of neighbors of reference particle
+	unsigned char neig = 0;
 	
 	/// loop over all the blocks, that can synchronize
 	for(int j=0; j<gridDim.x; ++j) 
 	{
-		int bOffset = j * blockDim.x;       /// offset particle id of current block
+		/// offset particle id of current block
+		int bOffset = j * blockDim.x;
 		
-		sPos[threadIdx.x] = dPos[bOffset + threadIdx.x];      /// fetch block of particle positions and save in shared memory
+		/// fetch block of particle positions and save in shared memory
+		sPos[threadIdx.x] = dPos[bOffset + threadIdx.x];
 		
 		__syncthreads();
 		
@@ -496,7 +505,6 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 			else if(d.y < -dev_hL)
 				d.y += dev_L;
 			
-			/// Disable PERIODIC IMAGE IN Z DIRECTION if Wall
 			if(d.z > dev_hL)
 				d.z -= dev_L;
 			else if(d.z < -dev_hL)
@@ -512,7 +520,8 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 			}
 		}
 		
-		__syncthreads();    /// Even if only one thread was succesful, all the other threads wait for it to finish
+		/// Even if only one thread was succesful, all the other threads wait for it to finish
+		__syncthreads();
 	}
 	
 	/// check if we missed the last block of particles
@@ -521,14 +530,16 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 		int tOffset = gridDim.x*blockDim.x;
 		
 		if(tOffset+threadIdx.x < N)
-			sPos[threadIdx.x] = dPos[tOffset+threadIdx.x];      /// fetch block of particle positions and save in shared memory
+			/// fetch block of particle positions and save in shared memory
+			sPos[threadIdx.x] = dPos[tOffset+threadIdx.x]; 
 		
 		__syncthreads();
 		
 		/// loop over the particles in current block, until N
 		for (int i = 0; i < N-tOffset; ++i) 
 		{
-			int id = tOffset + i;           /// current neighbor id = [tOffset,N)
+			/// current neighbor id = [tOffset,N)
+			int id = tOffset + i;
 			
 			float4 d = tPos - sPos[i];
 			
@@ -544,7 +555,6 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 			else if(d.y < -dev_hL)
 				d.y += dev_L;
 			
-			/// Disable PERIODIC IMAGE IN Z DIRECTION if Wall
 			if(d.z > dev_hL)
 				d.z -= dev_L;
 			else if(d.z < -dev_hL)
@@ -561,12 +571,15 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 			}
 		}
 		
-		__syncthreads();    /// Even if only one thread was succesful, all the other threads wait for it to finish
+		/// Even if only one thread was succesful, all the other threads wait for it to finish
+		__syncthreads();
 	}
 	
-	nlist[idx] = neig;        /// save the number of neighbors to global memory, colaesced
+	/// save the number of neighbors to global memory, colaesced
+	nlist[idx] = neig;
 }
 
+/// UNDER CONSTRUCTION ///
 __global__ void gpu_GenerateVerletListAsync_kernel(
 	float4 * dPos, 
 	int * vlist, 
@@ -576,7 +589,8 @@ __global__ void gpu_GenerateVerletListAsync_kernel(
 {
 	int idx = offset + threadIdx.x;
        
-	float4 tPos = tex1Dfetch(Coord_tex,idx);   /// save reference particle position in register
+	/// save reference particle position in register
+	float4 tPos = tex1Dfetch(Coord_tex,idx);
 	unsigned char neig = 0;
 	
 	for(int i = 0; i < N; ++ i)
@@ -594,7 +608,6 @@ __global__ void gpu_GenerateVerletListAsync_kernel(
 		else if(d.y < -dev_hL)
 			d.y += dev_L;
 		
-		/// NO PERIODIC IMAGE IN Z DIRECTION if Wall
 		if(d.z > dev_hL)
 			d.z -= dev_L;
 		else if(d.z < -dev_hL)
@@ -609,7 +622,8 @@ __global__ void gpu_GenerateVerletListAsync_kernel(
 	
 	__syncthreads();
 	
-	nlist[idx] = neig;          /// save the number of neighbors to global memory, colaesced
+	/// save the number of neighbors to global memory, colaesced
+	nlist[idx] = neig;
 }
 
 void util_calcVerletList (void) 
@@ -627,7 +641,8 @@ void util_calcVerletList (void)
 	if(debug)
 		CudaCheckError();
 	
-	if(nblocks*nthreads < N)            /// Check for threads in Asynchronous blocks
+	/// Check for threads in Asynchronous blocks
+	if(nblocks*nthreads < N)
 	{
 		gpu_GenerateVerletListAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_Coord, dev_vlist, dev_nlist, N, nblocks*nthreads);
 		if(debug)
@@ -647,8 +662,6 @@ void util_calcVerletList (void)
 		if(nlist[i] > max)
 			max = nlist[i];
 	
-	//printf("max %d\n", max);
-	
 	if(max > MAXNEIG) 
 	{
 		printf("////////////// Fail!!! ///////////\n");
@@ -665,8 +678,8 @@ void util_calcVerletList (void)
 /// This function calculates the temperature of the system 
 double thermo_temperature (void) 
 {
-	int 	i;
-	double 	temp, v2;
+	int i;
+	double temp, v2;
 	
 	temp = 0;
 	
@@ -721,7 +734,10 @@ void util_generateRandomForces (void)
 
 
 
-__global__ void gpu_RNG_setup ( curandState * state, unsigned long seed, int N)
+__global__ void gpu_RNG_setup ( 
+	curandState * state, 
+	unsigned long seed, 
+	int N )
 {
     int id = blockIdx.x * blockDim.x + threadIdx.x;
     
@@ -733,7 +749,10 @@ __global__ void gpu_RNG_setup ( curandState * state, unsigned long seed, int N)
     }
 } 
 
-__global__ void gpu_RNG_generate ( curandState* globalState, float4 * Rnd, int N) 
+__global__ void gpu_RNG_generate ( 
+	curandState* globalState, 
+	float4 * Rnd, 
+	int N ) 
 {
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
     
@@ -824,9 +843,9 @@ void init_config(char * filename, int filenameln)
 			sscanf (line,"%s %ld", str, &rdfPeriod);
 			printf("number of rdf period steps set to: %ld\n", rdfPeriod);
 		}
-		else if (!strcmp(str, "berendsenTime")){
-			sscanf (line,"%s %ld", str, &berendsenTime);
-			printf("number of berendsen thermostat timesteps set to: %ld\n", berendsenTime);
+		else if (!strcmp(str, "equilTime")){
+			sscanf (line,"%s %ld", str, &equilTime);
+			printf("number of equilibration timesteps set to: %ld\n", equilTime);
 		}
 		else if (!strcmp(str, "nosehooverTime")){
 			sscanf (line,"%s %ld", str, &nosehooverTime);
@@ -934,9 +953,21 @@ void init_config(char * filename, int filenameln)
 	}
 	
 	float boxExp;
-	int nRef0, nRef1, nRef2;
 	
-	fscanf(file,"%d\t%lf\t%lf\t%f\t%f\t%d\t%d\t%d\n",&N,&C_PBS,&box,&V,&boxExp,&nRef0,&nRef1,&nRef2);    /// Read the detailed information of the box
+	/// Read the first line of the file input.dat
+	fscanf(file,"%d\t%lf\t%lf\t%d\t%lf\t%f\t%f\t",&N,&C_PBS,&K_pp,&epsDiag,&box,&V,&boxExp);
+	for(typei = 0; typei<ntypes; ++typei) {
+		fscanf(file,"%d\t",&(nRef[typei]));
+		printf("nRef %d: %d\n", typei, nRef[typei]);
+	}
+	fscanf(file,"\n");
+	
+	printf("K_pp: %lf\n", K_pp);
+	
+	printf("EpsDiag: %s\n", epsDiag == 1 ? "ON" : "OFF");
+	
+	//K2 = K_pp*K_pp;
+	K = K_pp;
 	
 	/// Debye-H"ukel screening length ([C_PBS] = M = 1 mol/l)
 	kappa = 5.08 * sqrt(C_PBS);
@@ -944,14 +975,12 @@ void init_config(char * filename, int filenameln)
 	printf("Debye length: %lf\n", kappa);
 	
 	/// Reference Experimental values of the concentrations
-	VTot = pow(boxExp, 3); /// Volume of a box containing exactly 1 NP
+	/// Volume of a box containing exactly 1 NP
+	VTot = pow(boxExp, 3); 
 	
-	/// Number of proteins inside a box of volume Vtot
-	nTot[0] = nRef0; 
-	nTot[1] = nRef1;
-	nTot[2] = nRef2;
 	
-	N -= 1;                                      /// Remove the NP from the number of particles
+	/// Remove the NP from the number of particles
+	N -= 1;
 	
 	int npart = N;
 	
@@ -983,8 +1012,8 @@ void init_config(char * filename, int filenameln)
 	isOutsideClosed = (int *)calloc(N, sizeof(int));
 	CudaSafeCall(cudaMalloc( (void**)&dev_isOutsideClosed, N*sizeof(int) ));
 	
-	stopMol = (int *)calloc(N, sizeof(int));
-	CudaSafeCall(cudaMalloc( (void**)&dev_stopMol, N*sizeof(int) ));
+	//stopMol = (int *)calloc(N, sizeof(int));
+	//CudaSafeCall(cudaMalloc( (void**)&dev_stopMol, N*sizeof(int) ));
 	
 	/// Array with the mass of each type
 	M = (float *)malloc(ntypes*sizeof(float));
@@ -1050,8 +1079,8 @@ void init_config(char * filename, int filenameln)
 	
 	chi0 = chi1 = chi2 = 0.;
 	
-	R[0] = R[1] = R[2] = 0.;
-	Rs[0] = Rs[1] = Rs[2] = 0.;
+	for(typei = 0; typei < ntypes; ++typei)
+		R[typei] = Rs[typei] = 0.;
 	
 	int * num = (int*)calloc(sizeof(int), ntypes);
 	
@@ -1066,16 +1095,6 @@ void init_config(char * filename, int filenameln)
 		
 		/// Count how many particles of each type
 		float r = sqrt((xi - hbox)*(xi - hbox) + (yi - hbox)*(yi - hbox) + (zi - hbox)*(zi - hbox));
-		
-		if(r > L/4.)
-		{
-			if(typei == 0)
-				++ n0_0;
-			else if(typei == 1)
-				++ n1_0;
-			else if(typei == 2)
-				++ n2_0;
-		}
 		
 		Coord[i] = make_float4(xi,yi,zi,0.f);
 		
@@ -1119,11 +1138,16 @@ void init_config(char * filename, int filenameln)
 	
 	x_NP = y_NP = z_NP = hbox;
 	
+	/// Number of proteins inside a box of volume Vtot
+	for(typei = 0; typei < ntypes; ++typei)
+		nTot[typei] = nRef[typei];
+	
 	for (i = 0; i < N; ++i) {
-		int typei = type[i];
+		typei = type[i];
 		
 		if (stopTimeMol[typei] > 0) {
-			stopMol[i] = 1;
+			nTot[typei] = 0;
+			//stopMol[i] = 1;
 			if (stopTimeMol[typei] > longestStopTime)
 				longestStopTime = stopTimeMol[typei];
 		}
@@ -1137,14 +1161,10 @@ void init_config(char * filename, int filenameln)
 			maxR = Rs[i];
 	
 	/// Cutoff d'interaccio proteina-proteina
-	vec_rc2[0] = (Rs[0] + maxR) + Rs[0];
-	vec_rc2[1] = (Rs[1] + maxR) + Rs[1];
-	vec_rc2[2] = (Rs[2] + maxR) + Rs[2];
-	
-	vec_rc2[0] *= vec_rc2[0];
-	vec_rc2[1] *= vec_rc2[1];
-	vec_rc2[2] *= vec_rc2[2];
-	
+	for(typei = 0; typei < ntypes; ++typei){
+		vec_rc2[typei] = (Rs[typei] + maxR) + Rs[typei];
+		vec_rc2[typei] *= vec_rc2[typei];
+	}
 	
 	maxR = 0.;
 	
@@ -1154,19 +1174,26 @@ void init_config(char * filename, int filenameln)
 	
 	rc = sqrt(maxR);
 	
-	if(verbose)
-		printf("Parameter cutoff radius rc0: %1.3f, rc1: %1.3f, rc2: %1.3f\n", sqrt(vec_rc2[0]), sqrt(vec_rc2[1]), sqrt(vec_rc2[2]));
+	if(verbose) {
+		printf("Parameter cutoff radius ");
+		for(typei = 0; typei < ntypes; ++typei)
+			printf("rc%d: %1.3f, ", typei, sqrt(vec_rc2[typei]));
+		printf("\n");
+	}
 	
 	rc2_NP = 5 * (2*rc);
 	rc2_NP *= rc2_NP;
 	
 	/// Radi de l'esfera de verlet que conte els veins
-	vec_rv2[0] = vec_rc2[0] * 1.5*1.5;
-	vec_rv2[1] = vec_rc2[1] * 1.5*1.5;
-	vec_rv2[2] = vec_rc2[2] * 1.5*1.5;
+	for(typei = 0; typei < ntypes; ++typei)
+		vec_rv2[typei] = vec_rc2[typei] * 1.5*1.5;
 	
-	if(verbose)
-		printf("Parameter verlet radius rv0: %1.3f, rv1: %1.3f, rv2: %1.3f\n", sqrt(vec_rv2[0]), sqrt(vec_rv2[1]), sqrt(vec_rv2[2]));
+	if(verbose) {
+		printf("Parameter verlet radius ");
+		for(typei = 0; typei < ntypes; ++typei)
+			printf("rc%d: %1.3f, ", typei, sqrt(vec_rv2[typei]));
+		printf("\n");
+	}
 	
 	double minR = 1000.;
 	int minRt;
@@ -1184,16 +1211,31 @@ void init_config(char * filename, int filenameln)
 	if(verbose)
 		printf("Parameter verlet skin: %1.3f\n", skin2);
 	
+	
 	/// Allotjament de les llistes de verlet i altres quantitats relacionades
-	nlist = (unsigned char *)malloc(npart*sizeof(unsigned char));
+	nlist  = (unsigned char *)malloc(npart*sizeof(unsigned char));
 	CudaSafeCall(cudaMalloc( (void **)&dev_nlist, npart*sizeof(unsigned char)));
+	
+	if(verbose) {
+		printf("Neighbor list allocated\n");
+		fflush(stdout);
+	}
 	
 	vlist = (int *)malloc(npart*MAXNEIG*sizeof(int));
 	CudaSafeCall(cudaMalloc( (void **)&dev_vlist, npart*MAXNEIG*sizeof(int)));
 	
+	if(verbose) {
+		printf("Verlet list allocated\n");
+		fflush(stdout);
+	}
+	
 	CudaSafeCall(cudaMalloc( (void **)&dev_neigmax, sizeof(unsigned char)));
 	CudaSafeCall(cudaMalloc((void **)&dev_newlist,sizeof(unsigned int)));
 	
+	if(verbose) {
+		printf("GPU Neighbor parameters allocated\n");
+		fflush(stdout);
+	}
 	
 	fclose(file);
 }
@@ -1216,7 +1258,6 @@ void util_loadConfig (void)
 		printf("Error: file config/lastconfig.dat could not be opened. You must first run this program without the 'restart' option.\n");
 		exit(1);
 	}
-	
 	fscanf(file, "%lu\t%d\t%lf\t%d\n", &offsetTime, &updateVerletListPeriod, &logscale, &restartIndex);
 	
 	++restartIndex;
@@ -1266,7 +1307,10 @@ __global__ void gpu_divideAccMass_kernel (float4 * Acc, int N)
 	}
 }
 
-__global__ void gpu_addRandomForces_kernel (float4 * Acc, float4 * Rnd, int N) 
+__global__ void gpu_addRandomForces_kernel (
+	float4 * Acc, 
+	float4 * Rnd, 
+	int N ) 
 {
 	int i = blockIdx.x*blockDim.x+threadIdx.x;
 	
@@ -1284,11 +1328,14 @@ __global__ void gpu_forceThreadPerAtomTabulatedEquilSync_kernel (
 	int * vlist,
 	int N) 
 {
-	int i = blockIdx.x*blockDim.x + threadIdx.x;     /// Cada thread s'encarrega del calcul de una particula
+	/// Cada thread s'encarrega del calcul de una particula
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	
-	unsigned char neighbors = nlist[i];        /// number of neighbors of current particle, coalesced read
+	/// number of neighbors of current particle, coalesced read
+	unsigned char neighbors = nlist[i];
 	
-	float4 ri = tex1Dfetch(Coord_tex,i);  /// eficient read, stored in texture cache for later scattered reads
+	/// eficient read, stored in texture cache for later scattered reads
+	float4 ri = tex1Dfetch(Coord_tex,i);
 	
 	int typei = (int)tex1Dfetch(type_tex,i);
 	
@@ -1301,18 +1348,19 @@ __global__ void gpu_forceThreadPerAtomTabulatedEquilSync_kernel (
 		int j = vlist[neig*N + i];
 		//int j = vlist[i*MAXNEIG + neig];
 		
-		float4 rj = tex1Dfetch(Coord_tex, j); /// Distance between 'i' and 'j' particles. RANDOM read
+		/// Distance between 'i' and 'j' particles. RANDOM read
+		float4 rj = tex1Dfetch(Coord_tex, j);
 		float4 rij = rj - ri;
 		
 		rij.x -= dev_L * rintf(rij.x / dev_L);
 		rij.y -= dev_L * rintf(rij.y / dev_L);
 		rij.z -= dev_L * rintf(rij.z / dev_L);
 		
+		/// Save r2 = r*r in rij.w
+		rij.w = rij.x*rij.x + rij.y*rij.y + rij.z*rij.z;
 		
-		rij.w = rij.x*rij.x + rij.y*rij.y + rij.z*rij.z;       /// Save r2 = r*r in rij.w
-		
-		
-		if ( rij.w < dev_vec_rc2[typei])   /// Skip current particle if not witihin cutoff
+		/// Skip current particle if not witihin cutoff
+		if ( rij.w < dev_vec_rc2[typei])
 		{
 			/** If the pair is interacting...
 			 * Calculate the magnitude of the force DIVIDED BY THE DISTANCE */
@@ -1324,7 +1372,8 @@ __global__ void gpu_forceThreadPerAtomTabulatedEquilSync_kernel (
 		}
 	}
 	
-	Acc[i] = acc;        /// coalesced write to global memory
+	/// coalesced write to global memory
+	Acc[i] = acc;
 }
 
 
@@ -1336,18 +1385,22 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 	int * vlist,
 	int N) 
 {
-	int i = blockIdx.x*blockDim.x + threadIdx.x;     /// Cada thread s'encarrega del calcul de una particula
+	/// Cada thread s'encarrega del calcul de una particula
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	
-	unsigned char neighbors = nlist[i];        /// number of neighbors of current particle, coalesced read
+	/// number of neighbors of current particle, coalesced read
+	unsigned char neighbors = nlist[i];
 	
-	float4 ri = tex1Dfetch(Coord_tex,i);  /// eficient read, stored in texture cache for later scattered reads
+	/// eficient read, stored in texture cache for later scattered reads
+	float4 ri = tex1Dfetch(Coord_tex,i);
 	
 	int typei = (int)tex1Dfetch(type_tex,i);
 	
 /// Activate with soft-corona interactions
 #ifdef SC
 	float4 di = ri - dev_xyzNP;
-	di.w = sqrtf(di.x*di.x + di.y*di.y + di.z*di.z) - dev_R_NP;   /// Distance to the surface of the NP
+	/// Distance to the surface of the NP
+	di.w = sqrtf(di.x*di.x + di.y*di.y + di.z*di.z) - dev_R_NP;
 #endif
 	
 	float4 acc = {0.0f, 0.0f, 0.0f, 0.f};
@@ -1359,7 +1412,8 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 		int j = vlist[neig*N + i];
 		//int j = vlist[i*MAXNEIG + neig];
 		
-		float4 rj = tex1Dfetch(Coord_tex, j); /// Distance between 'i' and 'j' particles. RANDOM read
+		 /// Distance between 'i' and 'j' particles. RANDOM read
+		float4 rj = tex1Dfetch(Coord_tex, j);
 		float4 rij = rj - ri;
 		
 		float pair_force_symm = 0.f;
@@ -1372,9 +1426,11 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 		rij.y -= dev_L * rintf(rij.y / dev_L);
 		rij.z -= dev_L * rintf(rij.z / dev_L);
 		
-		rij.w = rij.x*rij.x + rij.y*rij.y + rij.z*rij.z;       /// Save r2 = r*r in rij.w
+		/// Save r2 = r*r in rij.w
+		rij.w = rij.x*rij.x + rij.y*rij.y + rij.z*rij.z;
 		
-		if ( rij.w < dev_vec_rc2[typei]) /// Skip current particle if not witihin cutoff
+		/// Skip current particle if not witihin cutoff
+		if ( rij.w < dev_vec_rc2[typei])
 		{
 			int typej = (int)tex1Dfetch(type_tex,j);
 			
@@ -1390,14 +1446,20 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 			/// Attractive interaction force, depends on the distances of i and j to te NP center
 			/// Symmetric part
 			//float expo = pow(dev_R[typei]*dev_R[typej]/(di.w*dj.w), ALPHA);
-			float expo = exp(-di.w*dj.w/(K*K));
+			//float expo = exp(-di.w*dj.w/(dev_K2));
+			//float expo = exp(-(di.w + dj.w)/dev_K);
+			float expo = exp(-sqrtf(di.w*dj.w)/dev_K);
 			
 			pair_force_symm += expo * tex1Dfetch(tableF_att_symm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
 			
 			/// Non-symmetric part
 			//pair_force_asymm = expo/di.w * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
 			
-			pair_force_asymm = - expo*dj.w/(K*K) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			//pair_force_asymm = - expo*dj.w/(dev_K2) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			
+			//pair_force_asymm = - expo/dev_K * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			
+			pair_force_asymm = - expo*sqrtf(dj.w/di.w)/(2.f*dev_K) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
 #endif
 		
 		/// Compute the acceleration in each direction
@@ -1405,12 +1467,14 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 		/// Falta dividir per la massa
 		acc += pair_force_symm * rij;
 #ifdef SC
-		acc += pair_force_asymm * di/(di.w+dev_R_NP); /// d/(d + Rnp) is a unitary vector in the direction of ri-Rnp
+		/// d/(d + Rnp) is a unitary vector in the direction of ri-Rnp
+		acc += pair_force_asymm * di/(di.w+dev_R_NP);
 #endif
 		}
 	}
 	
-	Acc[i] = acc;        /// coalesced write to global memory
+	/// coalesced write to global memory
+	Acc[i] = acc;
 }
 
 
@@ -1422,18 +1486,22 @@ __global__ void gpu_forceThreadPerAtomTabulatedAsync_kernel (
 	int N,
 	int offset) 
 {
-	int i = offset + threadIdx.x;        /// Cada thread s'encarrega del calcul de una particula
+	/// Cada thread s'encarrega del calcul de una particula
+	int i = offset + threadIdx.x;
 	
 	float pair_force;
 	
-	unsigned char neighbors = nlist[i];        /// number of neighbors of current particle, coalesced read
+	/// number of neighbors of current particle, coalesced read
+	unsigned char neighbors = nlist[i];
 	
 	int typei = (int)tex1Dfetch(type_tex,i);
 	
-	float4 ri = tex1Dfetch(Coord_tex,i);  /// eficient read, stored in texture cache for later scattered reads
+	/// eficient read, stored in texture cache for later scattered reads
+	float4 ri = tex1Dfetch(Coord_tex,i);
 	
 	float4 di = ri - dev_xyzNP;
-	di.w = sqrt(di.x*di.x + di.y*di.y + di.z*di.z) - dev_R_NP;   /// Distance to the center of the NP
+	/// Distance to the center of the NP
+	di.w = sqrt(di.x*di.x + di.y*di.y + di.z*di.z) - dev_R_NP;
 	
 	float4 acc = {0.0f, 0.0f, 0.0f, 0.f};
 	
@@ -1443,7 +1511,8 @@ __global__ void gpu_forceThreadPerAtomTabulatedAsync_kernel (
 		/// Index of the neighbor. Coalesced read
 		//int j = vlist[neig*N + i];
 		
-		float4 rj = tex1Dfetch(Coord_tex,vlist[neig*N + i]); /// Distance between 'i' and 'j' particles. RANDOM read
+		/// Distance between 'i' and 'j' particles. Warning: Scattered read
+		float4 rj = tex1Dfetch(Coord_tex,vlist[neig*N + i]); 
 		//float4 rj = tex1Dfetch(Coord_tex,vlist[i*MAXNEIG + neig]); /// Distance between 'i' and 'j' particles. RANDOM read
 		float4 rij = ri - rj;
 		
@@ -1458,16 +1527,16 @@ __global__ void gpu_forceThreadPerAtomTabulatedAsync_kernel (
 		else if(rij.y < -dev_hL)
 			rij.y += dev_L;
 		
-		/// NO PERIODIC IMAGE IN Z DIRECTION if Wall
 		if(rij.z > dev_hL)
 			rij.z -= dev_L;
 		else if(rij.z < -dev_hL)
 			rij.z += dev_L;
 		
+		 /// Save r2 = r*r in rij.w
+		rij.w = sqrtf(rij.x*rij.x + rij.y*rij.y + rij.z*rij.z);
 		
-		rij.w = sqrtf(rij.x*rij.x + rij.y*rij.y + rij.z*rij.z);       /// Save r2 = r*r in rij.w
-		
-		//if(rij.w < dev_rc2)            /// Skip current particle if not witihin cutoff
+		/// Skip current particle if not witihin cutoff
+		//if(rij.w < dev_rc2)
 		if(rij.w < dev_vec_rc2[typei])
 		{
 			/** If the pair is interacting...
@@ -1494,32 +1563,39 @@ __global__ void gpu_forceThreadPerAtomTabulatedAsync_kernel (
 	
 	__syncthreads();
 	
-	Acc[i] = acc;        /// coalesced write to global memory
+	/// coalesced write to global memory
+	Acc[i] = acc;
 	
 }
 
+/// NOT IN USE
 __device__ float gpu_calcPNPForce (float eps, float sigma2, float r2) 
 {
-	r2 = sigma2 / r2;      /// (sigma/r)**2
-	
-	float r12 = r2*r2;     /// (sigma/r)**4
-	
-	r12 = r12*r12*r12;     /// (sigma/r)**12
+	/// (sigma/r)**2
+	r2 = sigma2 / r2;
+	/// (sigma/r)**4
+	float r12 = r2*r2;
+	/// (sigma/r)**12
+	r12 = r12*r12*r12;
 	
 	return 4.f*24.f * eps * r2 * r12 * (r12 - 0.5) / sigma2;
 }
 
-
+/// NOT IN USE
 __device__ float gpu_calcPNPForceEquil (float eps, float sigma2, float r2) 
 {
-	r2 = sigma2 / r2;      /// (sigma/r)**2
+	/// (sigma/r)**2
+	r2 = sigma2 / r2;
+	/// (sigma/r)**4
+	float r12 = r2*r2;
+	/// (sigma/r)**12
+	r12 = r12*r12*r12;
 	
-	float r12 = r2*r2;     /// (sigma/r)**4
-	r12 = r12*r12*r12;     /// (sigma/r)**12
-	
-	return 4.f*24.f * eps * r2 * r12 * r12 / sigma2; /// Only repulsive, no adsorption possible
+	/// Only repulsive, no adsorption possible
+	return 4.f*24.f * eps * r2 * r12 * r12 / sigma2;
 }
 
+/// NOT IN USE
 __global__ void gpu_forceNP_kernel (float4 * Acc, int N)
 {
 	float r2, r;
@@ -1538,27 +1614,32 @@ __global__ void gpu_forceNP_kernel (float4 * Acc, int N)
 		
 		acc = make_float4(0.f,0.f,0.f,0.f);
 		
-		int typei = (int)tex1Dfetch(type_tex,i);  /// Type of the current particle
+		/// Type of the current particle
+		int typei = (int)tex1Dfetch(type_tex,i);
 		
 		/// Properties of the given type
 		EpsNPi = dev_EpsNP[typei];
 		Ri = dev_R[typei];
 		
-		Coords = tex1Dfetch(Coord_tex,i);  /// Read partice positions. Coalesced read
+		/// Read partice positions. Coalesced read
+		Coords = tex1Dfetch(Coord_tex,i);
 		
 		Coords.x -= dev_x_NP;
 		Coords.y -= dev_y_NP;
 		Coords.z -= dev_z_NP;
 		
-		r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;  /// Distance to te NP
+		/// Distance to te NP
+		r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;
 		 
-		r = sqrt(r2);       /// Distance between the center of a protein and the NP
+		/// Distance between the center of a protein and the NP
+		r = sqrt(r2);
 		r -= dev_R_NP;
 		
 		/// Rescale positions to shift the interaction potential
 		Coords *= r/sqrt(r2);
 		
-		r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z; /// Squared distance of a protein to the NP's surface
+		/// Squared distance of a protein to the NP's surface
+		r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;
 		
 		if(r2 < dev_rc2_NP)
 		{
@@ -1571,10 +1652,13 @@ __global__ void gpu_forceNP_kernel (float4 * Acc, int N)
 		if(i < threadIdMax)
 			__syncthreads();
 		
-		Acc[i] += acc;               /// Coalesced write
-		Acc[i] /= dev_M[typei];      /// Compute the resulting acceleration: a = F / m
+		/// Coalesced write
+		Acc[i] += acc;
+		/// Compute the resulting acceleration: a = F / m
+		Acc[i] /= dev_M[typei];
 		
-		i += blockDim.x*gridDim.x;   /// Next particle
+		/// Next particle
+		i += blockDim.x*gridDim.x;
 	}
 }
 
@@ -1589,31 +1673,34 @@ __global__ void gpu_forceNP_DLVO_kernel (float4 * Acc, int N)
 		if(i < N/blockDim.x * blockDim.x)
 			__syncthreads();
 		
-		int typei = (int)tex1Dfetch(type_tex,i);  /// Type of the current particle
+		/// Type of the current particle
+		int typei = (int)tex1Dfetch(type_tex,i);
 		
 		/// Properties of the given type
 		float EpsNPi = dev_EpsNP[typei];
 		float Ri = dev_R[typei];
 		float EpsEDLi = dev_EpsEDL[typei];
 		
-		float4 Coords = tex1Dfetch(Coord_tex,i);  /// Read partice positions. Coalesced read
+		/// Read partice positions. Coalesced read
+		float4 Coords = tex1Dfetch(Coord_tex,i);
 		
 		Coords.x -= dev_x_NP;
 		Coords.y -= dev_y_NP;
 		Coords.z -= dev_z_NP;
 		
-		float r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;  /// Squared Distance to te NP
-		
-		float r1 = sqrt(r2);  /// Distance between the center of a protein and the NP
-		
-		float r = r1 - dev_R_NP;       /// Distance between the center of a protein and the surface of the NP
-		
-		float d = r - Ri;    /// Distance between the surface of a protein and the surface of the NP
+		/// Squared Distance to te NP
+		float r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;
+		/// Distance between the center of a protein and the NP
+		float r1 = sqrt(r2);  
+		/// Distance between the center of a protein and the surface of the NP
+		float r = r1 - dev_R_NP;
+		/// Distance between the surface of a protein and the surface of the NP
+		float d = r - Ri;
 		
 		/// Rescale positions to shift the interaction potential
 		Coords *= r/r1;
-		
-		r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z; /// Squared distance of a protein to the NP's surface
+		/// Squared distance of a protein to the NP's surface
+		r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;
 		
 		
 		/// DLVO VdW dispersion forces
@@ -1631,10 +1718,13 @@ __global__ void gpu_forceNP_DLVO_kernel (float4 * Acc, int N)
 		if(i < N/blockDim.x * blockDim.x)
 			__syncthreads();
 		
-		Acc[i] += pair_force * Coords / sqrt(r2);               /// Coalesced write
-		Acc[i] /= dev_M[typei];      /// Compute the resulting acceleration: a = F / m
+		/// Coalesced write
+		Acc[i] += pair_force * Coords / sqrt(r2);
+		/// Compute the resulting acceleration: a = F / m
+		Acc[i] /= dev_M[typei];      
 		
-		i += blockDim.x*gridDim.x;   /// Next particle
+		/// Next particle
+		i += blockDim.x*gridDim.x;   
 	}
 }
 
@@ -1649,43 +1739,52 @@ __global__ void gpu_forceNP_Equil_kernel (float4 * Acc, int N)
 		if(i < N/blockDim.x * blockDim.x)
 			__syncthreads();
 		
-		int typei = (int)tex1Dfetch(type_tex,i);  /// Type of the current particle
+		/// Type of the current particle
+		int typei = (int)tex1Dfetch(type_tex,i);  
 		
 		/// Properties of the given type
 		float EpsNPi = dev_EpsNP[typei];
 		float Ri = dev_R[typei];
 		
-		float4 Coords = tex1Dfetch(Coord_tex,i);  /// Read partice positions. Coalesced read
+		/// Read partice positions. Coalesced read
+		float4 Coords = tex1Dfetch(Coord_tex,i);  
 		
 		/// Coordinates relative to the center of the NP
 		Coords.x -= dev_x_NP;
 		Coords.y -= dev_y_NP;
 		Coords.z -= dev_z_NP;
 		
-		float r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;  /// Squared distance to te NP
-		 
-		float r = sqrtf(r2);       /// Distance between the center of a protein and the center of the NP
-		r -= dev_R_NP;       /// Distance between the center of a protein and the surface of the NP
+		/// Squared distance to te NP
+		float r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;  
+		
+		/// Distance between the center of a protein and the center of the NP
+		float r = sqrtf(r2);       
+		/// Distance between the center of a protein and the surface of the NP
+		r -= dev_R_NP;       
 		
 		/// Rescale the vector distance to shift the interaction potential
 		Coords *= r/sqrtf(r2);
 		
-		r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z; /// Squared distance of a protein to the NP's surface
+		/// Squared distance of a protein to the NP's surface
+		r2 = Coords.x*Coords.x + Coords.y*Coords.y + Coords.z*Coords.z;
 		
 		float pair_force = gpu_calcPNPForceEquil(EpsNPi, Ri*Ri, r2);
 		
 		if(i < N/blockDim.x * blockDim.x)
 			__syncthreads();
 		
-		Acc[i] += pair_force * Coords;               /// Coalesced write
-		Acc[i] /= dev_M[typei];      /// Compute the resulting acceleration: a = F / m
+		/// Coalesced write
+		Acc[i] += pair_force * Coords;
+		/// Compute the resulting acceleration: a = F / m
+		Acc[i] /= dev_M[typei];      
 		
-		i += blockDim.x*gridDim.x;   /// Next particle
+		/// Next particle
+		i += blockDim.x*gridDim.x;
 	}
 }
 
 
-
+/// NOT IN USE
 void verlet_calcForce (bool equil) 
 {
 	/** This calculates the resultant force over
@@ -1715,12 +1814,12 @@ void verlet_calcForce (bool equil)
 	else {
 		gpu_forceThreadPerAtomTabulatedSync_kernel <<<nblocks,nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N);
 		if(debug)
-		CudaCheckError();
+			CudaCheckError();
 		
 		if(nblocks*nthreads < N) {      /// Asynchronous block
 			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N, nblocks*nthreads);
 			if(debug)
-		CudaCheckError();
+				CudaCheckError();
 		}
 	}
 	
@@ -1872,17 +1971,18 @@ void util_calcPPForceTable (void)
 	CudaSafeCall(cudaMalloc( (void**)&dev_tableF_att_symm,   ntypes*ntypes*ntable*sizeof(float) ));
 	CudaSafeCall(cudaMalloc( (void**)&dev_tableF_att_noSymm, ntypes*ntypes*ntable*sizeof(float) ));
 	
-	
-	
 	for(int t1 = 0; t1 < ntypes; ++t1)
 	  for(int t2 = 0; t2 < ntypes; ++t2)
 	  {
 		float w   = (R[t1]+R[t2])*0.25f;
 		float eps = -sqrt(EpsProt[t1]*EpsProt[t2]);
-		float d   = 1.1*(R[t1] + R[t2]);
+		float d   = (R[t1] + R[t2]);
 		float D   = Rs[t1] + Rs[t2];
 		
-		
+		if(epsDiag == 0) {
+			if(t1 == t2)
+				eps = 0.;
+		}
 		
 		for(double r2 = 0; r2 < rc*rc; r2+=1./100)
 		{
@@ -1898,9 +1998,9 @@ void util_calcPPForceTable (void)
 				tableF_rep[index] = 24 * pow(d/r,24) / (r*r) + 2. * 30. / (r * d * pow(2*cosh(0.5 * 30 * (r - D)/d), 2));
 				
 				//tableF_att_symm[index] = eps * (r - 1.1*d) / (w*w) * exp(-pow(r - 1.1*d,2)/(2*w*w)) / r;
-				tableF_att_symm[index] = -eps * (r - d)/(w*w) * exp(-pow(r - d,2)/(2*w*w)) / r;
+				tableF_att_symm[index] = -eps * (r - 1.1*d)/(w*w) * exp(-pow(r - 1.1*d,2)/(2*w*w)) / r;
 				
-				tableF_att_noSymm[index] = -eps * exp(-pow(r - d,2)/(2*w*w));
+				tableF_att_noSymm[index] = -eps * exp(-pow(r - 1.1*d,2)/(2*w*w));
 			}
 			else
 				tableU_rep[index] = tableF_rep[index] = tableF_att_symm[index] = tableF_att_noSymm[index] = 0.;
@@ -1992,20 +2092,28 @@ void initialize (int argc, char * argv[])
 	
 	init_config(filename, sizeof(filename));
 	
+	if(verbose) {
+		printf("Init config read\n");
+		fflush(stdout);
+	}
+	
 	if(restart)                           /// Check if we are starting from a previous run
 		util_loadConfig();
 	
 	if(verbose) {
 		printf("Configuration read\n");
 		printf("Number of particles: %d\n", N);
+		fflush(stdout);
 	}
 	
 //	util_calcPPpotentialTable();                 /// Compute the potential tables
 	util_calcPPForceTable();                 /// Compute the force tables
 	
 	T = thermo_temperature();         /// Compute the temperature
-	if(verbose)
+	if(verbose) {
 		printf("Temperature: %lf\n\n",T);
+		fflush(stdout);
+	}
 	
 	
 	langPrefactor = sqrt(2.*T0*Gamma/dt);
@@ -2017,7 +2125,7 @@ void initialize (int argc, char * argv[])
 	CudaSafeCall(cudaMemcpy( dev_Acc,   Acc,   N*sizeof(float4), cudaMemcpyHostToDevice ));
 	CudaSafeCall(cudaMemcpy( dev_type,  type,  N*sizeof(char),   cudaMemcpyHostToDevice ));
 	
-	CudaSafeCall(cudaMemcpy( dev_stopMol,  stopMol,  N*sizeof(int),   cudaMemcpyHostToDevice ));
+	//CudaSafeCall(cudaMemcpy( dev_stopMol,  stopMol,  N*sizeof(int),   cudaMemcpyHostToDevice ));
 	
 	/// Assign textures
 	CudaSafeCall(cudaBindTexture(NULL, Coord_tex, dev_Coord, N*sizeof(float4)));
@@ -2032,6 +2140,8 @@ void initialize (int argc, char * argv[])
 	CudaSafeCall(cudaMemcpyToSymbol(dev_V, (&V), sizeof(float)));
 	
 	CudaSafeCall(cudaMemcpyToSymbol(dev_kappa, (&kappa), sizeof(float)));
+	
+	CudaSafeCall(cudaMemcpyToSymbol(dev_K, (&K), sizeof(float)));
 	
 	CudaSafeCall(cudaMemcpyToSymbol(dev_rc2_NP, (&rc2_NP), sizeof(float)));
 	CudaSafeCall(cudaMemcpyToSymbol(dev_rv2,    (&rv2),    sizeof(float)));
@@ -2087,9 +2197,11 @@ void initialize (int argc, char * argv[])
 	util_calcVerletList();
 	
 	/// Then compute the forces, before first Coord and Vel update
-	verlet_calcForce(TRUE);
+	//verlet_calcForce(TRUE);
+	verlet_calcForceLangevin(TRUE);
 }
 
+///
 __global__ void gpu_updateVelocities_kernel (
 	float4 * Vel, 
 	float4 * Acc, 
@@ -2124,7 +2236,7 @@ __global__ void gpu_updateVelocitiesLangevin_kernel (
 __global__ void gpu_updateVelocitiesLangevinRelax_kernel (
 	float4 * Vel, 
 	float4 * Acc, 
-	int * stopMol,
+//	int * stopMol,
 	int N) 
 {
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -2133,9 +2245,6 @@ __global__ void gpu_updateVelocitiesLangevinRelax_kernel (
 	{
 		Vel[tid] += Acc[tid] * dev_hdt;
 		Vel[tid] /= 1.f + dev_gamma * dev_hdt;
-		
-		if(stopMol[tid])
-			Vel[tid] = make_float4(0.f,0.f,0.f,0.f);
 		
 		tid += blockDim.x*gridDim.x;
 	}
@@ -2175,8 +2284,8 @@ __global__ void gpu_updateVelocitiesPositions_kernel (
 	
 	int threadIdMax = N/blockDim.x * blockDim.x;
 	
-	float dev_LbuffMin = dev_L*0.25;
-	float dev_LbuffMax = dev_L*0.75;
+	float dev_LbuffMin = dev_L*0.1;
+	float dev_LbuffMax = dev_L*0.9;
 	
 	while (tid < N) 
 	{
@@ -2390,6 +2499,161 @@ __global__ void gpu_updateVelocitiesPositionsLangevin_kernel (
 	}
 }
 
+
+__global__ void gpu_updateVelocitiesPositionsLangevinEquil_kernel (
+	float4 * Vel,
+	float4 * Acc,
+	float4 * CoordVerlet,
+	float4 * Coord,
+	int * isOutsideClosed,
+	int N,
+	unsigned int * newlist) 
+{
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	
+	int isXiniInside, isYiniInside, isZiniInside;
+	int isXfinInside, isYfinInside, isZfinInside;
+	
+	unsigned char check = 1;
+	
+	if(threadIdx.x == 0)
+		(*newlist) = 0;
+	
+	while (tid < N) 
+	{
+		///if(tid < threadIdMax)
+		if(tid < N/blockDim.x * blockDim.x)
+			__syncthreads();
+		
+		float4 vel = (1.f - dev_gamma * dev_hdt) * Vel[tid];                     /// Coalesced reads
+		vel += Acc[tid] * dev_hdt;          /// Advance velocity
+		
+		float4 coordIni = Coord[tid];                 /// Coalesced read
+		float4 coord = coordIni + vel * dev_dt;              /// Advance coordinates
+		
+		/// check if the proteins can move from the buffer to the reaction region
+		if(isOutsideClosed[tid]) {
+			
+			isXiniInside = 1;
+			isYiniInside = 1;
+			isZiniInside = 1;
+			
+			isXfinInside = 1;
+			isYfinInside = 1;
+			isZfinInside = 1;
+			
+			if(coordIni.x < dev_L*0.1f)
+				isXiniInside = 0;
+			else if(coordIni.x > dev_L*0.9f)
+				isXiniInside = 0;
+			
+			if(coordIni.y < dev_L*0.1f)
+				isYiniInside = 0;
+			else if(coordIni.y > dev_L*0.9f)
+				isYiniInside = 0;
+			
+			if(coordIni.z < dev_L*0.1f)
+				isZiniInside = 0;
+			else if(coordIni.z > dev_L*0.9f)
+				isZiniInside = 0;
+			
+			
+			if(coord.x < dev_L*0.1f)
+				isXfinInside = 0;
+			else if(coord.x > dev_L*0.9f)
+				isXfinInside = 0;
+			
+			if(coord.y < dev_L*0.1f)
+				isYfinInside = 0;
+			else if(coord.y > dev_L*0.9f)
+				isYfinInside = 0;
+			
+			if(coord.z < dev_L*0.1f)
+				isZfinInside = 0;
+			else if(coord.z > dev_L*0.9f)
+				isZfinInside = 0;
+			
+			/// check if protein is finally inside the reaction region
+			if(isXfinInside && isYfinInside && isZfinInside) {
+				if(!isXiniInside) {
+					coord.x = coordIni.x - vel.x * dev_dt;
+					vel.x *= -1;
+				}
+				if(!isYiniInside) {
+					coord.y = coordIni.y - vel.y * dev_dt;
+					vel.y *= -1;
+				}
+				if(!isZiniInside) {
+					coord.z = coordIni.z - vel.z * dev_dt;
+					vel.z *= -1;
+				}
+			}
+		}
+		
+		/// Periodic boundary conditions
+		if(coord.x < 0.f)
+			coord.x += dev_L;
+		
+		else if(coord.x > dev_L) 
+			coord.x -= dev_L;
+		
+		
+		if(coord.y < 0.f)
+			coord.y += dev_L;
+		
+		else if(coord.y > dev_L) 
+			coord.y -= dev_L;
+		
+		
+		/// NO NEED if Wall is used
+		if(coord.z < 0.f)
+			coord.z += dev_L;
+		
+		else if(coord.z > dev_L) 
+			coord.z -= dev_L;
+		
+		
+		///if(tid < threadIdMax)
+		if(tid < N/blockDim.x * blockDim.x)
+			__syncthreads();
+		
+		Coord[tid] = coord;                     /// Assign new position
+		
+		Vel[tid] = vel;
+		
+		if(check) /// Check the distance to the original position of last verlet list
+		{
+			coord -= CoordVerlet[tid];
+			
+			if(coord.x > dev_hL)
+				coord.x -= dev_L;
+			else if(coord.x < -dev_hL)
+				coord.x += dev_L;
+			
+			if(coord.y > dev_hL)
+				coord.y -= dev_L;
+			else if(coord.y < -dev_hL)
+				coord.y += dev_L;
+				
+			/// NO NEED if Wall
+			if(coord.z > dev_hL)
+				coord.z -= dev_L;
+			else if(coord.z < -dev_hL)
+				coord.z += dev_L;
+			
+			/// flag to check if we need to recompute the verlet list
+			if(coord.x*coord.x + coord.y*coord.y + coord.z*coord.z > dev_skin2) 
+			{
+				atomicInc(newlist,1);
+				check = 0;
+			}
+		}
+		
+		tid += blockDim.x*gridDim.x;
+	}
+}
+
+
 __global__ void gpu_updateVelocitiesPositionsLangevinMSD_kernel (
 	float4 * Vel,
 	float4 * Acc,
@@ -2524,7 +2788,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevinRelax_kernel (
 	float4 * Acc,
 	float4 * CoordVerlet,
 	float4 * Coord,
-	int * stopMol,
+//	int * stopMol,
 	int * isOutsideClosed,
 	int N) 
 {
@@ -2544,9 +2808,6 @@ __global__ void gpu_updateVelocitiesPositionsLangevinRelax_kernel (
 		
 		vel = (1.f - dev_gamma * dev_hdt) * Vel[tid];                     /// Coalesced reads
 		vel += Acc[tid] * dev_hdt;          /// Advance velocity
-		
-		if(stopMol[tid])
-			vel = make_float4(0.f,0.f,0.f,0.f);
 		
 		coordIni = Coord[tid];                 /// Coalesced read
 		coord = coordIni + vel * dev_dt;              /// Advance coordinates
@@ -3006,7 +3267,7 @@ void verlet_integrateLangevinNVTrelax (bool updateVerletList)
 	int nblocks = (N + nthreads - 1) / nthreads;
 	
 	/// First half-step
-	gpu_updateVelocitiesPositionsLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_stopMol, dev_isOutsideClosed, N);
+	gpu_updateVelocitiesPositionsLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, /* dev_stopMol, */ dev_isOutsideClosed, N);
 	
 	if(debug)
 		CudaCheckError();
@@ -3017,7 +3278,36 @@ void verlet_integrateLangevinNVTrelax (bool updateVerletList)
 	verlet_calcForceLangevin (FALSE);     /// The acceleration a(t + dt) due to new positions and Force field
 	
 	/// Second half-step
-	gpu_updateVelocitiesLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_stopMol, N);
+	gpu_updateVelocitiesLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, /* dev_stopMol, */ N);
+	if(debug)
+		CudaCheckError();
+}
+
+void verlet_integrateLangevinNVTequil (void) 
+{
+	/// IMPORTANT DE COMPROVAR EL NOMBRE DE THREADS I BLOCKS, I FER TESTS!!!
+	int nthreads = NTHREADS;
+	int nblocks = (N + nthreads - 1) / nthreads;
+	
+	unsigned int newlist = 0;   /// S'inicialitza el flag que determina si cal recalcular la llista de Verlet
+	
+	/// First half-step
+	gpu_updateVelocitiesPositionsLangevinEquil_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_isOutsideClosed, N, dev_newlist);
+	
+	if(debug)
+		CudaCheckError();
+	
+	/// Check if we need to recompute the Verlet list
+	CudaSafeCall(cudaMemcpy( &newlist, dev_newlist, sizeof(unsigned int), cudaMemcpyDeviceToHost ));
+	
+	if(newlist)
+		util_calcVerletList();
+	
+	verlet_calcForceLangevin (TRUE);     /// The acceleration a(t + dt) due to new positions and Force field
+	
+	/// Second half-step
+	gpu_updateVelocitiesLangevin_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, N);
+	
 	if(debug)
 		CudaCheckError();
 }
@@ -3193,13 +3483,13 @@ int util_countAdsorbed(void)
 	double r,rx,ry,rz;
 	
 	memset(nAds, 0, sizeof(nAds));
-	
-	n0_hard = n1_hard = n2_hard = 0;
-	n0_soft1 = n1_soft1 = n2_soft1 = 0;
-	n0_soft2 = n1_soft2 = n2_soft2 = 0;
-	n0_t    = n1_t    = n2_t    = 0;
+	memset(nHard, 0, sizeof(nHard));
+	memset(nSoft1, 0, sizeof(nSoft1));
+	memset(nSoft2, 0, sizeof(nSoft2));
+	memset(nt, 0, sizeof(nt));
 	
 	float rHC, rSC1, rSC2;
+	
 	
 	for(i = 0; i < N; ++i)
 	{
@@ -3209,12 +3499,7 @@ int util_countAdsorbed(void)
 		rSC1 = rHC + 2*R[typei];
 		rSC2 = rSC1 + 2*R[typei];
 		
-		if(typei == 0)
-			++ n0_t;
-		else if(typei == 1)
-			++ n1_t;
-		else if(typei == 2)
-			++ n2_t;
+		++ nt[typei];
 		
 		rx = Coord[i].x - hLx;
 		ry = Coord[i].y - hLy;
@@ -3222,39 +3507,26 @@ int util_countAdsorbed(void)
 		
 		r = sqrt(rx*rx + ry*ry + rz*rz) - R_NP;
 		
-		if(r < rHC)          /// Proteins in the hard corona
-		{
-			if(typei == 0)
-				++ n0_hard;
-			else if(typei == 1)
-				++ n1_hard;
-			else if(typei == 2)
-				++ n2_hard;
+		if(r < rHC) {         /// Proteins in the hard corona
+			++ nHard[typei];
 		}
-		
 		else if(r < rSC1) {    /// Proteins in the soft corona
-			if(typei == 0)
-				++ n0_soft1;
-			else if(typei == 1)
-				++ n1_soft1;
-			else if(typei == 2)
-				++ n2_soft1;
+			++ nSoft1[typei];
 		}
 		else if(r < rSC2) {    /// Proteins in the soft corona
-			if(typei == 0)
-				++ n0_soft2;
-			else if(typei == 1)
-				++ n1_soft2;
-			else if(typei == 2)
-				++ n2_soft2;
+			++ nSoft2[typei];
 		}
 	}
 	
-	nAds[0] = n0_hard + n0_soft1 + n0_soft2;
-	nAds[1] = n1_hard + n1_soft1 + n1_soft2;
-	nAds[2] = n2_hard + n2_soft1 + n2_soft2;
 	
-	return nAds[0] + nAds[1] + nAds[2];
+	float nAdsTot = 0.;
+	
+	for(typei = 0; typei < ntypes; ++typei) {
+		nAds[typei] = nHard[typei] + nSoft1[typei] + nSoft2[typei];
+		nAdsTot += nAds[typei];
+	}
+	
+	return nAdsTot;
 }
 
 // TODO: THE LIMITS OF THE REACTION REGION SHOULD BE AN INPUT PARAMETER OF THE SIMULATION
@@ -3292,40 +3564,30 @@ void util_setBuffer(void) {
 	
 	int i, typei;
 	double rx, ry, rz;
-	
-	/// Count the number of proteins in the BUFFER region
-	nOuter[0] = n0_t - nInner[0] - nAds[0];
-	nOuter[1] = n1_t - nInner[1] - nAds[1];
-	nOuter[2] = n2_t - nInner[2] - nAds[2];
-	
-	/// Count the equivalent BULK concentration of FREE proteins in REFERENCE system
-	cTot[0] = (nTot[0] - nAds[0]) / VTot;
-	cTot[1] = (nTot[1] - nAds[1]) / VTot;
-	cTot[2] = (nTot[2] - nAds[2]) / VTot;
-	
 	double VSys = pow(0.8*L, 3);
-	
-	/// Count the equivalent BULK concentration in SIMULATION box 
-	cSys[0] = nInner[0] / VSys;
-	cSys[1] = nInner[1] / VSys;
-	cSys[2] = nInner[2] / VSys;
-	
-	int delta[3];
-	
-	delta[0] = + (cTot[0] - cSys[0]);
-	delta[1] = + (cTot[1] - cSys[1]);
-	delta[2] = + (cTot[2] - cSys[2]);
-	
+	int delta[ntypes];
 	double Vout = pow(L, 3);
 	
-	nFree[0] = cTot[0]*Vout;
-	nFree[1] = cTot[1]*Vout;
-	nFree[2] = cTot[2]*Vout;
-	
-	nBuff[0] = (n0_t - nAds[0] - nFree[0] - delta[0]*Vout);
-	nBuff[1] = (n1_t - nAds[1] - nFree[1] - delta[1]*Vout);
-	nBuff[2] = (n2_t - nAds[2] - nFree[2] - delta[2]*Vout);
-	
+	for(typei = 0; typei < ntypes; ++typei) {
+		
+		/// Count the number of proteins in the BUFFER region
+		
+		nOuter[typei] = nt[typei] - nInner[typei] - nAds[typei];
+		
+		/// Count the equivalent BULK concentration of FREE proteins in REFERENCE system
+		
+		cTot[typei] = (nTot[typei] - nAds[typei]) / VTot;
+		
+		/// Count the equivalent BULK concentration in SIMULATION box
+		
+		cSys[typei] = nInner[typei] / VSys;
+		
+		delta[typei] = + (cTot[typei] - cSys[typei]);
+		
+		nFree[typei] = cTot[typei]*Vout;
+		
+		nBuff[typei] = (nt[typei] - nAds[typei] - nFree[typei] - delta[typei]*Vout);
+	}
 	
 	/// count how many proteins of each type are of buffer type, and remove from the counting
 	for(i = 0; i < N; ++i)
@@ -3342,11 +3604,10 @@ void util_setBuffer(void) {
 				nBuff[typei] --;
 	}
 	
-	double p[3];
+	double p[ntypes];
 	
-	p[0] = nBuff[0] / nOuter[0];
-	p[1] = nBuff[1] / nOuter[1];
-	p[2] = nBuff[2] / nOuter[2];
+	for(typei = 0; typei < ntypes; ++typei)
+		p[typei] = nBuff[typei] / nOuter[typei];
 	
 	/// count how many proteins are inside the reaction region
 	for(i = 0; i < N; ++i)
@@ -3380,40 +3641,26 @@ void util_setBuffer_Equil(void) {
 	
 	int i, typei;
 	double rx, ry, rz;
-	
-	/// Count the number of proteins in the BUFFER region
-	nOuter[0] = n0_t - nInner[0] - nAds[0];
-	nOuter[1] = n1_t - nInner[1] - nAds[1];
-	nOuter[2] = n2_t - nInner[2] - nAds[2];
-	
-	/// Count the equivalent BULK concentration of FREE proteins in REFERENCE system
-	cTot[0] = (nTot[0] - nAds[0]) / VTot;
-	cTot[1] = (nTot[1] - nAds[1]) / VTot;
-	cTot[2] = (nTot[2] - nAds[2]) / VTot;
-	
 	double VSys = pow(0.8*L, 3);
-	
-	/// Count the equivalent BULK concentration in SIMULATION box 
-	cSys[0] = (nInner[0]) / VSys;
-	cSys[1] = (nInner[1]) / VSys;
-	cSys[2] = (nInner[2]) / VSys;
-	
-	int delta[3];
-	
-	delta[0] = + (cTot[0] - cSys[0]);
-	delta[1] = + (cTot[1] - cSys[1]);
-	delta[2] = + (cTot[2] - cSys[2]);
-	
+	int delta[ntypes];
 	double Vout = pow(L, 3);
 	
-	nFree[0] = cTot[0]*Vout;
-	nFree[1] = cTot[1]*Vout;
-	nFree[2] = cTot[2]*Vout;
-	
-	nBuff[0] = (n0_t - nAds[0] - nFree[0] - delta[0]*Vout);
-	nBuff[1] = (n1_t - nAds[1] - nFree[1] - delta[1]*Vout);
-	nBuff[2] = (n2_t - nAds[2] - nFree[2] - delta[2]*Vout);
-	
+	for(int typei = 0; typei < ntypes; ++typei) {
+		/// Count the number of proteins in the BUFFER region
+		nOuter[typei] = nt[typei] - nInner[typei] - nAds[typei];
+		
+		/// Count the equivalent BULK concentration of FREE proteins in REFERENCE system
+		cTot[typei] = (nTot[typei] - nAds[typei]) / VTot;
+		
+		/// Count the equivalent BULK concentration in SIMULATION box 
+		cSys[typei] = (nInner[typei]) / VSys;;
+		
+		delta[typei] = + (cTot[typei] - cSys[typei]);
+		
+		nFree[typei] = cTot[typei]*Vout;
+		
+		nBuff[typei] = (nt[typei] - nAds[typei] - nFree[typei] - delta[typei]*Vout);
+	}
 	
 	/// count how many proteins of each type are of buffer type, and remove from the counting
 	for(i = 0; i < N; ++i)
@@ -3430,11 +3677,10 @@ void util_setBuffer_Equil(void) {
 				nBuff[typei] --;
 	}
 	
-	double p[3];
+	double p[ntypes];
 	
-	p[0] = nBuff[0] / nOuter[0];
-	p[1] = nBuff[1] / nOuter[1];
-	p[2] = nBuff[2] / nOuter[2];
+	for(int typei = 0; typei < ntypes; ++typei)
+		p[typei] = nBuff[typei] / nOuter[typei];
 	
 	/// count how many proteins are inside the reaction region
 	for(i = 0; i < N; ++i)
@@ -3460,13 +3706,12 @@ void util_setBuffer_Equil(void) {
 		else 
 			isOutsideClosed[i] = 0;
 		
-		if(stopMol[i])
-			isOutsideClosed[i] = 1;
+		//if(stopMol[i])
+		//	isOutsideClosed[i] = 1;
 	}
 	
-	printf("concentracio objectiu 0: %e\t concentracio actual: %e\n", cTot[0], cSys[0]);
-	printf("concentracio objectiu 1: %e\t concentracio actual: %e\n", cTot[1], cSys[1]);
-	printf("concentracio objectiu 2: %e\t concentracio actual: %e\n", cTot[2], cSys[2]);
+	for(int typei = 0; typei < ntypes; ++typei)
+		printf("Conc. obj. type %d: %e\t Act. Conc.: %e\n", typei, cTot[typei], cSys[typei]);
 	//printf("L %lf nInner %d nAds %d nOuter %d nBuff %lf\n", L, nInner[2], nAds[2], nOuter[2], nBuff[2]);
 	
 	CudaSafeCall(cudaMemcpy( dev_isOutsideClosed,  isOutsideClosed,  N*sizeof(int),   cudaMemcpyHostToDevice ));
@@ -3497,25 +3742,21 @@ void util_fractionBound (double t) {
 	/// in FCS the observation volume is ~ 1 um^3, so it is ~ (1000 nm)^3
 	double Veff = pow(1000,3);
 	/// volume of the reaction region in the system
-	double VSys = pow(0.9*L, 3);
-	double Conc[3];
-	double nEq[3], fB[3];
+	double VSys = pow(0.8*L, 3);
+	double Conc[ntypes];
+	double nEq[ntypes], fB[ntypes];
 	
 	/// compute the concentration of each protein in the reaction region
-	Conc[0] = nInner[0]/VSys;
-	Conc[1] = nInner[1]/VSys;
-	Conc[2] = nInner[2]/VSys;
+	for(int typei = 0; typei < ntypes; ++typei)
+		Conc[typei] = nInner[typei]/VSys;
 	
 	/// compute the equivalent number of protein in an FCS observation cell of size Veff
-	nEq[0] = Conc[0]*Veff;
-	nEq[1] = Conc[1]*Veff;
-	nEq[2] = Conc[2]*Veff;
+	for(int typei = 0; typei < ntypes; ++typei)
+		nEq[typei] = Conc[typei]*Veff;
 	
 	///the fraction bound is simply the ratio of adsorbed to (free+adsorbed) proteins
-	
-	fB[0] = nAds[0] /(nAds[0] + nEq[0]);
-	fB[1] = nAds[1] /(nAds[1] + nEq[1]);
-	fB[2] = nAds[2] /(nAds[2] + nEq[2]);
+	for(int typei = 0; typei < ntypes; ++typei)
+		fB[typei] = nAds[typei] /(nAds[typei] + nEq[typei]);
 	
 	FILE * myFile;
 	char filename[100];
@@ -3524,22 +3765,39 @@ void util_fractionBound (double t) {
 	
 	myFile = fopen(filename, "a");
 	
-	fprintf(myFile, "%e\t%e\t%e\t%e\n", t, fB[0], fB[1], fB[2]);
-	
+	fprintf(myFile, "%e\t", t);
+	for(int typei = 0; typei < ntypes; ++typei)
+		fprintf(myFile, "%e\t", fB[typei]);
+	fprintf(myFile, "\n");
 	fclose(myFile);
 }
 
 // TODO: MODIFY THIS FUNCTION TO BE SCALABLE TO NTYPES OF PROTEINS
 void util_printAdsorbed(double t, FILE * file) 
 {
-	fprintf(file,"%e\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",t,n0_hard,n1_hard,n2_hard,n0_soft1,n1_soft1,n2_soft1,n0_soft2,n1_soft2,n2_soft2);
+	fprintf(file,"%e\t", t);
+	for(int typei = 0; typei < ntypes; ++typei) fprintf(file,"%d\t",nHard[typei]);
+	for(int typei = 0; typei < ntypes; ++typei) fprintf(file,"%d\t",nSoft1[typei]);
+	for(int typei = 0; typei < ntypes; ++typei) fprintf(file,"%d\t",nSoft2[typei]);
+	fprintf(file,"\n");
 	fflush(file);
 	
 	if(verbose) {
-		printf("Total:         %d\t%d\t%d\n", n0_t,    n1_t,    n2_t   );
-		printf("Hard Corona:   %d\t%d\t%d\n", n0_hard,  n1_hard,  n2_hard );
-		printf("Soft Corona 1: %d\t%d\t%d\n", n0_soft1, n1_soft1, n2_soft1);
-		printf("Soft Corona 2: %d\t%d\t%d\n", n0_soft2, n1_soft2, n2_soft2);
+		printf("Total:         ");
+		for(int typei = 0; typei < ntypes; ++typei) printf("%d\t", nt[typei]);
+		printf("\n");
+		
+		printf("Hard Corona:   ");
+		for(int typei = 0; typei < ntypes; ++typei) printf("%d\t", nHard[typei]);
+		printf("\n");
+		
+		printf("Soft Corona 1: ");
+		for(int typei = 0; typei < ntypes; ++typei) printf("%d\t", nSoft1[typei]);
+		printf("\n");
+		
+		printf("Soft Corona 2: ");
+		for(int typei = 0; typei < ntypes; ++typei) printf("%d\t", nSoft2[typei]);
+		printf("\n");
 	}
 }
 
@@ -3547,14 +3805,18 @@ void util_printAdsorbed(double t, FILE * file)
 // TODO: MODIFY THIS FUNCTION TO BE SCALABLE TO NTYPES OF PROTEINS
 void util_printConcentration(double t, FILE * file) 
 {
-	fprintf(file, "%e\t%e\t%e\t%e\t%e\t%e\t%e\n", t, cSys[0], cSys[1], cSys[2], cTot[0], cTot[1], cTot[2]);
+	fprintf(file, "%e\t", t);
+	
+	for(int typei = 0; typei < ntypes; ++typei)
+		fprintf(file, "%e\t", cSys[typei]);
+	for(int typei = 0; typei < ntypes; ++typei)
+		fprintf(file, "%e\t", cTot[typei]);
+	fprintf(file, "\n");
 	fflush(file);
 	
-	if(verbose) {
-		printf("concentracio objectiu 0: %e\t concentracio actual: %e\n", cTot[0], cSys[0]);
-		printf("concentracio objectiu 1: %e\t concentracio actual: %e\n", cTot[1], cSys[1]);
-		printf("concentracio objectiu 2: %e\t concentracio actual: %e\n", cTot[2], cSys[2]);
-	}
+	if(verbose) 
+		for(int typei = 0; typei < ntypes; ++typei)
+			printf("Conc. obj. type %d: %e\t Act. Conc.: %e\n", typei, cTot[typei], cSys[typei]);
 }
 
 
@@ -3580,7 +3842,7 @@ void init_rdf()
 	int i;
 	
 	rdfMin = R_NP;      /// Distancia zero de la g(r)
-	rdfMax = L/2; /// Distancia maxima
+	rdfMax = (0.8*L)/2; /// Distancia maxima
 	
 	dr = 0.1;
 	nrdf = (int) ((rdfMax - rdfMin)/dr) + 1;          /// Nombre de punts a cada g(r)
@@ -3612,20 +3874,18 @@ void util_addToRdf (void)
 void util_calcPrintRdf (int ntimes) 
 {
 	int i, j;
-	float r, V_NP, rho;
+	float r, V_NP, rho, rdfTot;
 	
 	V_NP = 4*M_PI/3 * R_NP*R_NP*R_NP;
 	
 	rho = N/(V - V_NP);
 	
-	FILE * file1, * file2;
+	FILE * file1;
 	char filename[100];
-	snprintf(filename, sizeof(filename), "%s%s%d%s", root, "results/rdf/rdf_run", restartIndex, ".dat");
-	file1 = fopen(filename, "w");
 	snprintf(filename, sizeof(filename), "%s%s", root, "results/rdf/rdf.dat");
-	file2 = fopen(filename, "w");
+	file1 = fopen(filename, "w");
 	
-	if (file1 == NULL || file2 == NULL) {
+	if (file1 == NULL) {
 		printf("Error: file rdf.dat could not be opened.\n");
 		exit(1);
 	}
@@ -3634,17 +3894,23 @@ void util_calcPrintRdf (int ntimes)
 	{
 		r = i*dr + R_NP;
 		
+		fprintf(file1,"%e\t",i*dr);
+		
+		rdfTot = 0.;
+		
 		for(j = 0; j < ntypes; ++j) {
 			rdf[j*nrdf + i] /= 4*M_PI * rho * r*r * dr; /// radial distrib. function definition
 			rdf[j*nrdf + i] /= ntimes;                  /// time average
+			rdfTot += rdf[j*nrdf + i];
 		}
 		
-		fprintf(file1,"%e\t%e\t%e\t%e\t%e\n",i*dr,rdf[0*nrdf + i] + rdf[1*nrdf + i] + rdf[2*nrdf + i],rdf[0*nrdf + i],rdf[1*nrdf + i],rdf[2*nrdf + i]);
-		fprintf(file2,"%e\t%e\t%e\t%e\t%e\n",i*dr,rdf[0*nrdf + i] + rdf[1*nrdf + i] + rdf[2*nrdf + i],rdf[0*nrdf + i],rdf[1*nrdf + i],rdf[2*nrdf + i]);
+		fprintf(file1,"%e\t",rdfTot);
+		for(j = 0; j < ntypes; ++j) 
+			fprintf(file1,"%e\t",rdf[j*nrdf + i]);
+		fprintf(file1,"\n");
 	}
 	
 	fclose(file1);
-	fclose(file2);
 }
 
 

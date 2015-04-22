@@ -22,7 +22,6 @@
 //#define DLVO_EDL_ENERGY 1.501f
 
 #define ALPHA .4f
-#define K 50.f
 //#define BETA  10.0f
 
 
@@ -35,7 +34,8 @@ long int 	thermoSteps		= 10000L,
 		rdfPeriod		= 1000L,
 		moviePeriod		= 10000L;
 
-long int 	berendsenTime	= 1000L,
+long int 	equilTime		= 1000L,
+		berendsenTime	= 1000L,
 		nosehooverTime	= 1000L,
 		relaxTime1		= 0L,
 		relaxTime2		= 0L, 
@@ -97,6 +97,8 @@ float vec_rc2[ntypes], vec_rv2[ntypes];
 double rho, box, hbox, Lx, Ly, Lz, hLx, hLy, hLz;
 float4 Box;
 
+int nRef0, nRef1, nRef2;
+
 /// Temperatura instantania i Pressio
 double T,P;
 /// Energies
@@ -130,6 +132,9 @@ double etail, ptail;
 /// Debye-H"ukel screening length
 double C_PBS = 0.001; 
 float kappa;
+double K_pp;
+int epsDiag = 1;
+float K;
 
 /// Vector que conte el tipus de cada molecula
 char * type;
@@ -154,6 +159,7 @@ __device__ __constant__ int dev_N;
 __device__ __constant__ float dev_rc2_NP, dev_rv2, dev_skin2, dev_hdt, dev_dt, dev_gamma, dev_langPrefactor;
 __device__ __constant__ float dev_vec_rc2[ntypes], dev_vec_rv2[ntypes];
 __device__ __constant__ float dev_kappa;
+__device__ __constant__ float dev_K;
 
 float * R, * Rs;   /// Vectors dels radis de les molecules
 float * M, * sqrM;         /// Vector de la massa de les molecules
@@ -208,6 +214,7 @@ unsigned char * dev_neigmax;
 unsigned int * dev_newlist;
 
 int n0_0, n1_0, n2_0, n0_t, n1_t, n2_t, n0_ads, n1_ads, n2_ads, n0_hard, n1_hard, n2_hard, n0_soft1, n1_soft1, n2_soft1, n0_soft2, n1_soft2, n2_soft2;
+int nt[ntypes], nHard[ntypes], nSoft1[ntypes], nSoft2[ntypes];
 
 int nstopped;
 
@@ -251,7 +258,7 @@ void verlet_integrateBerendsenNVT (void);
 void verlet_integrateNoseHooverNVT (bool equil, bool update);
 
 void verlet_integrateLangevinNVT (bool computeMSD, bool update);
-
+void verlet_integrateLangevinNVTequil (void);
 void verlet_integrateLangevinNVTrelax (bool update);
 void verlet_integrateLangevinNVTrelax_bak (bool update, int molid1, int molid2);
 
@@ -281,7 +288,7 @@ void util_printAdsorbed(double t, FILE * file);
 void util_printConcentration(double t, FILE * file);
 void util_saveState (long int t);
 void util_cudaSetMeFree (void);
-
+double util_gaussianRandom (double mu, double sig);
 
 curandState* devStates;
 
