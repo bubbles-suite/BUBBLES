@@ -1,0 +1,49 @@
+# Equilibration steps at the beginning of the simulation. Only used for thermalization and protein concentration setup
+
+equilTime  10000L
+
+# Number of time-steps that the selected proteins remain outside of the reaction region
+#stopTimeMol1    2000000L 
+#stopTimeMol2    1000000L 
+#stopTimeMol3    10000000L 
+
+# Number of simulation time-steps after the previous run. 
+simulTime    1000000L
+
+# Number of steps at the end of the simulation to compute the RDF of protein-NP
+rdfTime      100000L
+
+# Periodic measures and operations 
+moviePeriod      10000L
+thermoSteps      10000L 
+keepRatioPeriod   1000L 
+rdfPeriod         1000L
+
+# Timestep in simulation units
+dt    0.05
+
+# Initial temperature, and ojective thermostat temperature
+Tinit 1.0
+T0    1.0
+
+# Coupling to the Langevin thermostat
+Gamma 0.005
+
+# This is the identifier of the GPU in use
+gpuId  0
+
+# Number of threads in GPU kernels. The number of partciles of the system N should be 
+# a multiple of nThreads. (reccomended: 64, 128, 256. Best with 256 if N >= 256)
+nThreads 256
+
+# Promt information selector
+verbose
+
+# Uncomment to restart from a previous run
+#restart
+
+# Choose if the number of each kind of protein should be kept 'constant', only choose this option if N is large enough
+#constantConcentration
+
+# This is the root path with all the files and directories. Default: the same directory as mdgpu
+root ./
