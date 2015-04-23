@@ -8,7 +8,7 @@ equilTime  100000L
 #stopTimeMol3    10000000L 
 
 # Simulation production steps
-simulTime    1000000L
+simulTime    5000000L
 rdfTime      100000L
 
 moviePeriod       100000L
