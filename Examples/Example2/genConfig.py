@@ -30,9 +30,9 @@ parser.add_argument("-rho_NP", type=float, help="Density of the NP",          de
 # C_TfwSiO2(half-coverage)  = 0.055
 # C_FibwSiO2(half-coverage) = ???
 parser.add_argument("-C_NP",    type=float, help="Conc. of NPs",              default=0.001)
-parser.add_argument("-C_Prot1", type=float, help="Conc. of Protein 1",        default=1.00)
+parser.add_argument("-C_Prot1", type=float, help="Conc. of Protein 1",        default=0.50)
 parser.add_argument("-C_Prot2", type=float, help="Conc. of Protein 2",        default=0.0)
-parser.add_argument("-C_Prot3", type=float, help="Conc. of Protein 3",        default=5.0)
+parser.add_argument("-C_Prot3", type=float, help="Conc. of Protein 3",        default=2.0)
 
 ''' Number of excess proteins that may be adsorbed to the NP ''' 
 parser.add_argument("-Nmin_Prot1", type=float, help="Min Num. Protein 1",     default=100)
