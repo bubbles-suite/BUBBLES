@@ -1,0 +1,45 @@
+# Simulation steps for each thermostat at the beginning of the simulation. Only used for thermalization
+
+equilTime  100000L
+
+# Relaxation time only used by simulation with preincubation of one (or more) kinds of proteins
+#stopTimeMol1    10000000L 
+#stopTimeMol2    1000000L 
+#stopTimeMol3    10000000L 
+
+# Simulation production steps
+simulTime    5000000L
+rdfTime      100000L
+
+moviePeriod       100000L
+thermoSteps       100000L 
+keepRatioPeriod   100000L 
+rdfPeriod          10000L
+
+# Timestep
+dt    0.05
+
+# Initial temperature, and ojective thermostat temperature
+Tinit 1.0
+T0    1.0
+
+# Coupling to the langevin thermostat
+Gamma 0.005
+
+# This is the identifier of the GPU in use
+gpuId  0
+
+# Number of threads in GPU kernels, the number of partciles of the system N should be a multiple of nThreads
+nThreads 256
+
+# Promt information
+verbose
+
+# Choose whether to restart from a previous run
+#restart
+
+# Choose if the number of each kind of protein should be kept 'constant', only choose this option if N is large enough
+#constantConcentration
+
+# This is the root path with all the files and directories
+root ./
