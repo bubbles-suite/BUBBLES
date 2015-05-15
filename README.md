@@ -85,10 +85,14 @@ In the VMD Main window go to `>File>Load Viasualization State...`. Load one of t
 
 ## Running a simulation with one kind of proteins
 
+Follow the instructions in the wiki section https://github.com/bubbles-suite/BUBBLES/wiki/Examples#51-running-a-simulation-with-one-kind-of-proteins
+
 ## Running a simulation with multiple kinds of proteins
+
+Follow the instructions in the wiki section https://github.com/bubbles-suite/BUBBLES/wiki/Examples#51-running-a-simulation-with-one-kind-of-proteins
 
 # Documentation
 
-The documentation for this project is not ready yet and will be available in a future
+The documentation for this project is available as a wiki inside this repository at https://github.com/bubbles-suite/BUBBLES/wiki/
 
 
