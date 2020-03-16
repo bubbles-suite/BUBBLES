@@ -67,9 +67,9 @@ parser.add_argument("-M3",       type=float, help="Mass of prot 3",           de
 # EpsNP_HSAwSiO2 = 9.7
 # EpsNP_TfwSiO2  = 8.3
 # EpsNP_FibwSiO2 = 8.
-parser.add_argument("-EpsNP1", type=float, help="Int. energy NP-prot 1", default=9.0) 
-parser.add_argument("-EpsNP2", type=float, help="Int. energy NP-prot 2", default=15.) 
-parser.add_argument("-EpsNP3", type=float, help="Int. energy NP-prot 3", default=9.7)
+parser.add_argument("-EpsNP1", type=float, help="Int. energy NP-prot 1", default=9.7) 
+parser.add_argument("-EpsNP2", type=float, help="Int. energy NP-prot 2", default=8.3) 
+parser.add_argument("-EpsNP3", type=float, help="Int. energy NP-prot 3", default=8.)
 
 ''' Protein-protein interaction in the surface in [Kb*T] '''
 # > 0 for multilayer adsorption
