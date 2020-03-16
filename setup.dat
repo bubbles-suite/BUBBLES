@@ -39,7 +39,7 @@ verbose
 #restart
 
 # Choose if the number of each kind of protein should be kept 'constant', only choose this option if N is large enough
-#constantConcentration
+constantConcentration
 
 # This is the root path with all the files and directories
 root ./
