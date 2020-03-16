@@ -12,7 +12,7 @@
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 
 /// This macro activates the protein-protein interactions in the corona
-//#define SC
+#define SC
 
 /// HSA-SiO2
 //#define DLVO_EDL_ENERGY 0.864f
