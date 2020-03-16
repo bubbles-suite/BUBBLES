@@ -106,10 +106,12 @@ int main ( int argc, char * argv[] )
 	
 	////////////////// SIMULATION STARTS HERE //////////////////////////
 	
-	util_applyBufferConditions();
-	util_countInside();
-	//util_setBuffer_Equil();
-	util_setBuffer();
+	if(constantConcentration) {
+		util_applyBufferConditions();
+		util_countInside();
+		//util_setBuffer_Equil();
+		util_setBuffer();
+	}
 	
 	/// First check if we are restarting from a previous run or not
 	if(!restart) {
@@ -152,6 +154,7 @@ int main ( int argc, char * argv[] )
 				
 				cudaMemcpy (Coord, dev_Coord, N*sizeof(float4), cudaMemcpyDeviceToHost);
 				
+				
 				/// Compute the number of adsorbed particles on-the-fly
 				/// THIS COULD ALSO BE DONE INSIDE THE GPU!
 				if(verbose)
@@ -160,7 +163,8 @@ int main ( int argc, char * argv[] )
 				util_countAdsorbed();
 				util_countInside();
 				//util_setBuffer_Equil();
-				util_setBuffer();
+				if(constantConcentration)
+					util_setBuffer();
 			}
 		}
 		
@@ -172,7 +176,7 @@ int main ( int argc, char * argv[] )
 		//updateVerletListPeriod = berendsenTime * .66 / verletlistcount;
 		updateVerletListPeriod = equilTime * .66 / verletlistcount;
 		if(verbose)
-			printf("Verlet list computed %d times. Update period is: %d\n",verletlistcount,updateVerletListPeriod);
+			printf("listcouted %d times. Update period is: %d\n",verletlistcount,updateVerletListPeriod);
 	}
 	
 	/////////////////////// MAIN SIMULATION LOOP ////////////////////////
@@ -219,7 +223,8 @@ int main ( int argc, char * argv[] )
 					printf("Adsorbed: %d\n",adsorbed);
 				
 				util_countInside();
-				util_setBuffer();
+				if(constantConcentration)
+					util_setBuffer();
 				util_fractionBound(t*dt);
 				
 				util_printConcentration(t, concentration);
@@ -246,7 +251,8 @@ int main ( int argc, char * argv[] )
 				int adsorbed = util_countAdsorbed();
 				
 				util_countInside();
-				util_setBuffer();
+				if(constantConcentration)
+					util_setBuffer();
 				util_fractionBound(t*dt);
 				
 				util_printConcentration(t, concentrationLog);
@@ -346,7 +352,8 @@ int main ( int argc, char * argv[] )
 			int adsorbed = util_countAdsorbed();
 			
 			util_countInside();
-			util_setBuffer();
+			if(constantConcentration)
+				util_setBuffer();
 			util_fractionBound(t*dt);
 			
 			util_printConcentration(t, concentrationLog);
@@ -403,7 +410,8 @@ int main ( int argc, char * argv[] )
 			/// THIS COULD ALSO BE DONE INSIDE THE GPU!
 			util_countAdsorbed();
 			util_countInside();
-			util_setBuffer();
+			if(constantConcentration)
+				util_setBuffer();
 			
 			util_printConcentration(t, concentration);
 		}
@@ -721,11 +729,11 @@ double util_uniformRandom (double mu, double sig)
 void util_generateRandomForces (void) 
 {
 	
-	double coeff = sqrt(2*T0*Gamma/dt);
+	double coeff = sqrt(2*T0/dt);
 	int i;
 	
 	for(i = 0; i < N; ++i) {
-		RandomForce[i] = coeff / sqrM[type[i]] * make_float4(util_uniformRandom(0,1),util_uniformRandom(0,1),util_uniformRandom(0,1),0);
+		RandomForce[i] = coeff*sqrt(Gamma[i]) / sqrM[type[i]] * make_float4(util_uniformRandom(0,1),util_uniformRandom(0,1),util_uniformRandom(0,1),0);
 	}
 	
 	CudaSafeCall(cudaMemcpy( dev_Rnd, RandomForce, N*sizeof(float4), cudaMemcpyHostToDevice ));
@@ -773,7 +781,7 @@ __global__ void gpu_RNG_generate (
 	    randNum.z = curand_uniform( &localState ) - 0.5f;
 	    randNum *= 3.4641f;
 	    
-	    randNum *= dev_langPrefactor / dev_sqrM[typei];
+	    randNum *= dev_langPrefactor[typei] / dev_sqrM[typei];
 	    
 	    __syncthreads();
 	    
@@ -893,9 +901,17 @@ void init_config(char * filename, int filenameln)
 			sscanf (line,"%s %f", str, &T0);
 			printf("Thermostat objective temperature set to T0=%f\n", T0);
 		}
-		else if (!strcmp(str, "Gamma")) {
-			sscanf (line,"%s %f", str, &Gamma);
-			printf("Langevin Heat-bath coupling Gamma=%f\n", Gamma);
+		else if (!strcmp(str, "Gamma1")) {
+			sscanf (line,"%s %f", str, &Gamma1);
+			printf("Langevin Heat-bath coupling Gamma1=%f\n", Gamma1);
+		}
+		else if (!strcmp(str, "Gamma2")) {
+			sscanf (line,"%s %f", str, &Gamma2);
+			printf("Langevin Heat-bath coupling Gamma2=%f\n", Gamma2);
+		}
+		else if (!strcmp(str, "Gamma3")) {
+			sscanf (line,"%s %f", str, &Gamma3);
+			printf("Langevin Heat-bath coupling Gamma3=%f\n", Gamma3);
 		}
 		
 		else if (!strcmp(str, "restart")) {
@@ -1023,6 +1039,9 @@ void init_config(char * filename, int filenameln)
 	R = (float *)malloc(ntypes*sizeof(float));
 	Rs = (float *)malloc(ntypes*sizeof(float));
 	
+	Gamma = (float *)malloc(npart*sizeof(float));
+	CudaSafeCall(cudaMalloc( (void**)&dev_gamma, npart*sizeof(float) ));
+	
 	/// Arrays with the affinity of each type with the NP
 	EpsNP = (float *)malloc(ntypes*sizeof(float));
 	
@@ -1105,6 +1124,10 @@ void init_config(char * filename, int filenameln)
 		EpsNP[typei] = epsi;
 		EpsEDL[typei] = epsi2;
 		EpsProt[typei] = epsi3;
+		if(typei==0) Gamma[i] = Gamma1;
+		else if(typei==1) Gamma[i] = Gamma2;
+		else if(typei==2) Gamma[i] = Gamma3;
+
 		
 		Acc[i] = make_float4(0.,0.,0.,0.);
 		
@@ -1448,7 +1471,7 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 			//float expo = pow(dev_R[typei]*dev_R[typej]/(di.w*dj.w), ALPHA);
 			//float expo = exp(-di.w*dj.w/(dev_K2));
 			//float expo = exp(-(di.w + dj.w)/dev_K);
-			float expo = exp(-sqrtf(di.w*dj.w)/dev_K);
+			float expo = exp(-di.w*dj.w/(dev_K*dev_K));
 			
 			pair_force_symm += expo * tex1Dfetch(tableF_att_symm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
 			
@@ -1459,7 +1482,8 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 			
 			//pair_force_asymm = - expo/dev_K * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
 			
-			pair_force_asymm = - expo*sqrtf(dj.w/di.w)/(2.f*dev_K) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			//pair_force_asymm = - expo*sqrtf(dj.w/di.w)/(2.f*dev_K) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			pair_force_asymm = - expo*di.w/(dev_K*dev_K) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
 #endif
 		
 		/// Compute the acceleration in each direction
@@ -1980,7 +2004,7 @@ void util_calcPPForceTable (void)
 		float D   = Rs[t1] + Rs[t2];
 		
 		if(epsDiag == 0) {
-			if(t1 == t2)
+			if(t1 != t2)
 				eps = 0.;
 		}
 		
@@ -2116,7 +2140,16 @@ void initialize (int argc, char * argv[])
 	}
 	
 	
-	langPrefactor = sqrt(2.*T0*Gamma/dt);
+	langPrefactor = (float *)malloc(ntypes*sizeof(float));
+	
+	langPrefactor[0] = sqrt(2.*T0*Gamma1/dt);
+	langPrefactor[1] = sqrt(2.*T0*Gamma2/dt);
+	langPrefactor[2] = sqrt(2.*T0*Gamma3/dt);
+
+	
+	printf("lang prefactor 1 %f\n", langPrefactor[0]);
+	printf("lang prefactor 2 %f\n", langPrefactor[1]);
+	printf("lang prefactor 3 %f\n", langPrefactor[2]);
 	
 	////////////// Copy system state from CPU to GPU ///////////////////
 	/// Dynamic variables
@@ -2124,6 +2157,8 @@ void initialize (int argc, char * argv[])
 	CudaSafeCall(cudaMemcpy( dev_Vel,   Vel,   N*sizeof(float4), cudaMemcpyHostToDevice ));
 	CudaSafeCall(cudaMemcpy( dev_Acc,   Acc,   N*sizeof(float4), cudaMemcpyHostToDevice ));
 	CudaSafeCall(cudaMemcpy( dev_type,  type,  N*sizeof(char),   cudaMemcpyHostToDevice ));
+	
+	CudaSafeCall(cudaMemcpy(dev_gamma, Gamma, N*sizeof(float), cudaMemcpyHostToDevice));
 	
 	//CudaSafeCall(cudaMemcpy( dev_stopMol,  stopMol,  N*sizeof(int),   cudaMemcpyHostToDevice ));
 	
@@ -2153,8 +2188,7 @@ void initialize (int argc, char * argv[])
 	CudaSafeCall(cudaMemcpyToSymbol(dev_dt,  (&dt),  sizeof(float)));
 	CudaSafeCall(cudaMemcpyToSymbol(dev_hdt, (&hdt), sizeof(float)));
 	
-	CudaSafeCall(cudaMemcpyToSymbol(dev_gamma, (&Gamma), sizeof(float)));
-	CudaSafeCall(cudaMemcpyToSymbol(dev_langPrefactor, (&langPrefactor), sizeof(float)));
+	CudaSafeCall(cudaMemcpyToSymbol(dev_langPrefactor, langPrefactor, ntypes*sizeof(float)));
 	
 	/// Particle properties
 	CudaSafeCall(cudaMemcpyToSymbol(dev_M,     M,     ntypes*sizeof(float)));
@@ -2163,6 +2197,7 @@ void initialize (int argc, char * argv[])
 	CudaSafeCall(cudaMemcpyToSymbol(dev_Rs,    Rs,    ntypes*sizeof(float)));
 	CudaSafeCall(cudaMemcpyToSymbol(dev_EpsNP, EpsNP, ntypes*sizeof(float)));
 	CudaSafeCall(cudaMemcpyToSymbol(dev_EpsEDL, EpsEDL, ntypes*sizeof(float)));
+	
 	
 	/// NP properties
 	CudaSafeCall(cudaMemcpyToSymbol(dev_x_NP, (&x_NP), sizeof(float)));
@@ -2220,6 +2255,7 @@ __global__ void gpu_updateVelocities_kernel (
 __global__ void gpu_updateVelocitiesLangevin_kernel (
 	float4 * Vel, 
 	float4 * Acc, 
+	float * gamma,
 	int N) 
 {
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -2227,7 +2263,8 @@ __global__ void gpu_updateVelocitiesLangevin_kernel (
 	while (tid < N) 
 	{
 		Vel[tid] += Acc[tid] * dev_hdt;
-		Vel[tid] /= 1.f + dev_gamma * dev_hdt;
+		Vel[tid] /= 1.f + gamma[tid] * dev_hdt;
+		//Vel[tid] /= 1.f + dev_hdt;
 		
 		tid += blockDim.x*gridDim.x;
 	}
@@ -2237,6 +2274,7 @@ __global__ void gpu_updateVelocitiesLangevinRelax_kernel (
 	float4 * Vel, 
 	float4 * Acc, 
 //	int * stopMol,
+	float * dev_gamma,
 	int N) 
 {
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -2244,7 +2282,7 @@ __global__ void gpu_updateVelocitiesLangevinRelax_kernel (
 	while (tid < N) 
 	{
 		Vel[tid] += Acc[tid] * dev_hdt;
-		Vel[tid] /= 1.f + dev_gamma * dev_hdt;
+		Vel[tid] /= 1.f + dev_gamma[tid] * dev_hdt;
 		
 		tid += blockDim.x*gridDim.x;
 	}
@@ -2386,6 +2424,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevin_kernel (
 	float4 * CoordVerlet,
 	float4 * Coord,
 	int * isOutsideClosed,
+	float * dev_gamma,
 	int N) 
 {
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -2399,7 +2438,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevin_kernel (
 		if(tid < N/blockDim.x * blockDim.x)
 			__syncthreads();
 		
-		float4 vel = (1.f - dev_gamma * dev_hdt) * Vel[tid];                     /// Coalesced reads
+		float4 vel = (1.f - dev_gamma[tid] * dev_hdt) * Vel[tid];                     /// Coalesced reads
 		vel += Acc[tid] * dev_hdt;          /// Advance velocity
 		
 		float4 coordIni = Coord[tid];                 /// Coalesced read
@@ -2506,6 +2545,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevinEquil_kernel (
 	float4 * CoordVerlet,
 	float4 * Coord,
 	int * isOutsideClosed,
+	float * dev_gamma,
 	int N,
 	unsigned int * newlist) 
 {
@@ -2525,7 +2565,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevinEquil_kernel (
 		if(tid < N/blockDim.x * blockDim.x)
 			__syncthreads();
 		
-		float4 vel = (1.f - dev_gamma * dev_hdt) * Vel[tid];                     /// Coalesced reads
+		float4 vel = (1.f - dev_gamma[tid] * dev_hdt) * Vel[tid];                     /// Coalesced reads
 		vel += Acc[tid] * dev_hdt;          /// Advance velocity
 		
 		float4 coordIni = Coord[tid];                 /// Coalesced read
@@ -2661,6 +2701,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevinMSD_kernel (
 	float4 * Coord,
 	int4 * image,
 	int * isOutsideClosed,
+	float * dev_gamma,
 	int N) 
 {
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -2674,7 +2715,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevinMSD_kernel (
 		if(tid < N/blockDim.x * blockDim.x)
 			__syncthreads();
 		
-		float4 vel = (1.f - dev_gamma * dev_hdt) * Vel[tid];                     /// Coalesced reads
+		float4 vel = (1.f - dev_gamma[tid] * dev_hdt) * Vel[tid];                     /// Coalesced reads
 		vel += Acc[tid] * dev_hdt;          /// Advance velocity
 		
 		
@@ -2790,6 +2831,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevinRelax_kernel (
 	float4 * Coord,
 //	int * stopMol,
 	int * isOutsideClosed,
+	float * dev_gamma,
 	int N) 
 {
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -2806,7 +2848,7 @@ __global__ void gpu_updateVelocitiesPositionsLangevinRelax_kernel (
 		if(tid < threadIdMax)
 			__syncthreads();
 		
-		vel = (1.f - dev_gamma * dev_hdt) * Vel[tid];                     /// Coalesced reads
+		vel = (1.f - dev_gamma[tid] * dev_hdt) * Vel[tid];                     /// Coalesced reads
 		vel += Acc[tid] * dev_hdt;          /// Advance velocity
 		
 		coordIni = Coord[tid];                 /// Coalesced read
@@ -3241,9 +3283,9 @@ void verlet_integrateLangevinNVT (bool computeMSD, bool updateVerletList)
 	
 	/// First half-step
 	if(computeMSD)
-		gpu_updateVelocitiesPositionsLangevinMSD_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_Image, dev_isOutsideClosed, N);
+		gpu_updateVelocitiesPositionsLangevinMSD_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_Image, dev_isOutsideClosed, dev_gamma, N);
 	else
-		gpu_updateVelocitiesPositionsLangevin_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_isOutsideClosed, N);
+		gpu_updateVelocitiesPositionsLangevin_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_isOutsideClosed, dev_gamma, N);
 	
 	if(debug)
 		CudaCheckError();
@@ -3254,7 +3296,7 @@ void verlet_integrateLangevinNVT (bool computeMSD, bool updateVerletList)
 	verlet_calcForceLangevin (FALSE);     /// The acceleration a(t + dt) due to new positions and Force field
 	
 	/// Second half-step
-	gpu_updateVelocitiesLangevin_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, N);
+	gpu_updateVelocitiesLangevin_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_gamma, N);
 	
 	if(debug)
 		CudaCheckError();
@@ -3267,7 +3309,7 @@ void verlet_integrateLangevinNVTrelax (bool updateVerletList)
 	int nblocks = (N + nthreads - 1) / nthreads;
 	
 	/// First half-step
-	gpu_updateVelocitiesPositionsLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, /* dev_stopMol, */ dev_isOutsideClosed, N);
+	gpu_updateVelocitiesPositionsLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, /* dev_stopMol, */ dev_isOutsideClosed, dev_gamma, N);
 	
 	if(debug)
 		CudaCheckError();
@@ -3278,7 +3320,7 @@ void verlet_integrateLangevinNVTrelax (bool updateVerletList)
 	verlet_calcForceLangevin (FALSE);     /// The acceleration a(t + dt) due to new positions and Force field
 	
 	/// Second half-step
-	gpu_updateVelocitiesLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, /* dev_stopMol, */ N);
+	gpu_updateVelocitiesLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, /* dev_stopMol, */ dev_gamma, N);
 	if(debug)
 		CudaCheckError();
 }
@@ -3292,7 +3334,7 @@ void verlet_integrateLangevinNVTequil (void)
 	unsigned int newlist = 0;   /// S'inicialitza el flag que determina si cal recalcular la llista de Verlet
 	
 	/// First half-step
-	gpu_updateVelocitiesPositionsLangevinEquil_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_isOutsideClosed, N, dev_newlist);
+	gpu_updateVelocitiesPositionsLangevinEquil_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_isOutsideClosed, dev_gamma, N, dev_newlist);
 	
 	if(debug)
 		CudaCheckError();
@@ -3306,7 +3348,7 @@ void verlet_integrateLangevinNVTequil (void)
 	verlet_calcForceLangevin (TRUE);     /// The acceleration a(t + dt) due to new positions and Force field
 	
 	/// Second half-step
-	gpu_updateVelocitiesLangevin_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, N);
+	gpu_updateVelocitiesLangevin_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_gamma, N);
 	
 	if(debug)
 		CudaCheckError();
@@ -3626,7 +3668,7 @@ void util_setBuffer(void) {
 				}
 			if(isOutsideClosed[i] == 0 && nBuff[typei] > 0)
 				if (rand()/(RAND_MAX+1.) < p[typei]) {
-					isOutsideClosed[i] = 1;
+					isOutsideClosed[i] = 1; /// WARNING THIS REMOVES THE BUFFER!!!
 				}
 		}
 		/// if it is in the reaction zone
@@ -3699,7 +3741,7 @@ void util_setBuffer_Equil(void) {
 				}
 			if(isOutsideClosed[i] == 0 && nBuff[typei] > 0)
 				if (rand()/(RAND_MAX+1.) < p[typei]) {
-					isOutsideClosed[i] = 1;
+					isOutsideClosed[i] = 1; /// WARNING THIS REMOVES THE BUFFER
 				}
 		}
 		/// if it is in the reaction zone
@@ -3730,9 +3772,9 @@ void util_applyBufferConditions(void) {
 		rz = Coord[i].z;
 		
 		if (rx < 0.1*L || rx > 0.9*L || ry < 0.1*L || ry > 0.9*L || rz < 0.1*L || rz > 0.9*L) 
-			isOutsideClosed[i] = 1;
-		else
 			isOutsideClosed[i] = 0;
+		else
+			isOutsideClosed[i] = 1;
 	}
 }
 
