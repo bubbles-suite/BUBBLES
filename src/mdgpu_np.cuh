@@ -43,7 +43,7 @@ long int 	equilTime		= 1000L,
 		rdfTime		= 50000000L;
 
 /// Pas d'integracio, i control del temps de relaxament del termostat
-float dt = 0.005, hdt = dt*0.5, Gamma = .006, langPrefactor;
+float dt = 0.005, hdt = dt*0.5, * langPrefactor, Gamma1, Gamma2, Gamma3;
 
 float Tinit = 1.0;     /// Temperatura inicial
 float T0 = 1.0;     /// Temperatura objectiu
@@ -156,7 +156,7 @@ float L, hL, V;
 __device__ __constant__ float dev_L, dev_hL, dev_V;
 __device__ __constant__ float4 dev_Box, dev_xyzNP;
 __device__ __constant__ int dev_N;
-__device__ __constant__ float dev_rc2_NP, dev_rv2, dev_skin2, dev_hdt, dev_dt, dev_gamma, dev_langPrefactor;
+__device__ __constant__ float dev_rc2_NP, dev_rv2, dev_skin2, dev_hdt, dev_dt, dev_langPrefactor[ntypes];
 __device__ __constant__ float dev_vec_rc2[ntypes], dev_vec_rv2[ntypes];
 __device__ __constant__ float dev_kappa;
 __device__ __constant__ float dev_K;
@@ -174,6 +174,8 @@ __device__ __constant__ float dev_M[ntypes], dev_sqrM[ntypes], dev_R[ntypes], de
 float * partial_Epot, * partial_P;
 float * partial_Ekin, * partial_T;
 float * dev_partial_Epot, * dev_partial_P, * dev_Epot, * dev_P;
+float * Gamma;
+float * dev_gamma;
 
 /// Part d'Energia potencial degut a les interaccions molecula-NP 
 float Epot_NP, P_NP;
