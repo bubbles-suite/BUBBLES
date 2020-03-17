@@ -4,11 +4,11 @@ equilTime  100000L
 
 # Relaxation time only used by simulation with preincubation of one (or more) kinds of proteins
 #stopTimeMol1    10000000L 
-#stopTimeMol2    1000000L 
+#stopTimeMol2    10000000L 
 #stopTimeMol3    10000000L 
 
 # Simulation production steps
-simulTime    1000000L
+simulTime    10000000L
 rdfTime      100000L
 
 moviePeriod       100000L
@@ -24,7 +24,9 @@ Tinit 1.0
 T0    1.0
 
 # Coupling to the langevin thermostat
-Gamma 0.005
+Gamma1 0.01
+Gamma2 0.01
+Gamma3 0.01
 
 # This is the identifier of the GPU in use
 gpuId  0
