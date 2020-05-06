@@ -227,7 +227,7 @@ int main ( int argc, char * argv[] )
 					util_setBuffer();
 				util_fractionBound(t*dt);
 				
-				util_printConcentration(t, concentration);
+				util_printConcentration(t*dt, concentration);
 				
 				/// Append to adsorption profile
 				util_printAdsorbed(t*dt,adsorption);
