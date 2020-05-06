@@ -43,7 +43,7 @@ parser.add_argument("-Nmin_Prot3", type=float, help="Min Num. Protein 3",     de
 # Rh_HSA = 2.7
 # Rh_Tf  = 3.72
 # Rh_Fib = 6.6
-parser.add_argument("-R1",       type=float, help="Hard Radius of prot 1",    default=6.60) # Fib
+parser.add_argument("-R1",       type=float, help="Hard Radius of prot 1",    default=8.50) # Fib
 parser.add_argument("-R2",       type=float, help="Hard Radius of prot 2",    default=3.72) # Tf
 parser.add_argument("-R3",       type=float, help="Hard Radius of prot 3",    default=2.70) # HSA
 
@@ -51,7 +51,7 @@ parser.add_argument("-R3",       type=float, help="Hard Radius of prot 3",    de
 # Rs_HSA = 3.6
 # Rs_Tf  = 3.72
 # Rs_Fib = 8.5
-parser.add_argument("-Rs1",      type=float, help="Soft Radius of prot 1",    default=8.50)
+parser.add_argument("-Rs1",      type=float, help="Soft Radius of prot 1",    default=11.0)
 parser.add_argument("-Rs2",      type=float, help="Soft Radius of prot 2",    default=3.72)
 parser.add_argument("-Rs3",      type=float, help="Soft Radius of prot 3",    default=3.60)
 
