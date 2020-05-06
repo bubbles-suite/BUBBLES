@@ -255,7 +255,7 @@ int main ( int argc, char * argv[] )
 					util_setBuffer();
 				util_fractionBound(t*dt);
 				
-				util_printConcentration(t, concentrationLog);
+				util_printConcentration(t*dt, concentrationLog);
 				
 				if(verbose)
 					printf("Adsorbed: %d\n",adsorbed);
