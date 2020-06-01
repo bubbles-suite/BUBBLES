@@ -413,7 +413,7 @@ int main ( int argc, char * argv[] )
 			if(constantConcentration)
 				util_setBuffer();
 			
-			util_printConcentration(t, concentration);
+			util_printConcentration(t*dt, concentration);
 		}
 		
 		/// Save movie frame. Warning! it is very slow and disk consuming
