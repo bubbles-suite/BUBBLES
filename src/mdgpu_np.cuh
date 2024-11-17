@@ -7,7 +7,6 @@
 #define FALSE  0
 
 /// This macro activates the check for errors with the GPU (may influence performance)
-//#define CUDA_ERROR_CHECK
 #define CudaSafeCall( err ) __cudaSafeCall( err, __FILE__, __LINE__ )
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 
@@ -139,7 +138,6 @@ float K;
 /// Vector que conte el tipus de cada molecula
 char * type;
 char * dev_type;
-texture<char> type_tex;
 
 int * isInsideClosed;
 int * dev_isInsideClosed;
@@ -191,7 +189,6 @@ int4 * Image, * dev_Image;
 /// Vectors de les posicions de Verlet
 float4 * CoordVerlet;
 float4 * dev_CoordVerlet;
-texture<float4> Coord_tex;
 
 float x_NP, y_NP, z_NP;    /// Posicio de la NP
 __device__ __constant__ float dev_x_NP,dev_y_NP,dev_z_NP;
@@ -239,10 +236,8 @@ int ntable;
 __device__ __constant__ int dev_ntable;
 
 float * tableU_rep,* tableU_att, * dev_tableU_rep,* dev_tableU_att;
-texture<float> tableU_rep_tex, tableU_att_tex;
 
 float * tableF_rep,* tableF_att_symm, * tableF_att_noSymm, * dev_tableF_rep,* dev_tableF_att_symm, * dev_tableF_att_noSymm;
-texture<float> tableF_rep_tex, tableF_att_symm_tex, tableF_att_noSymm_tex;
 
 long int t;
 
@@ -252,11 +247,7 @@ void initialize (int argc, char * argv[]);
 
 /// Integrators
 void verlet_integrateNVE (bool update);
-
-//void verlet_integrateBerendsenEquil (int N);
 void verlet_integrateBerendsenNVT (void);
-
-//void verlet_integrateNHEquil (int N);
 void verlet_integrateNoseHooverNVT (bool equil, bool update);
 
 void verlet_integrateLangevinNVT (bool computeMSD, bool update);
