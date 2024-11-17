@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 ''' Script that generates a cubic box full of spheres in a cubic lattice with a 
 centered sphere of radius R_NP '''
@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser()
 ''' General parameters, temperature in [kb*T] and lengths in [nm] '''
 parser.add_argument("-kT",       type=float, help="Temperature",              default=1.00)
 parser.add_argument("-N",        type=int,   help="Number of particles",      default=256*4)
-parser.add_argument("-L",        type=float, help="Lateral size of the box",  default=375.) 
+parser.add_argument("-L",        type=float, help="Lateral size of the box",  default=500.) 
 parser.add_argument("-RNP",      type=float, help="Radius of the NP",         default=50.) # L > 4*RNP
 parser.add_argument("-C_PBS",    type=float, help="Concentration of PBS in M", default=0.010)
 
@@ -116,7 +116,7 @@ M_NP = args.rho_NP * V_NP                  # g/cm3 * cm3 = grams
 kDa_2_mg =  1.6601E-18
 mg_2_kDa =  1./1.6601E-18
 
-print "Mass of the NP: %1.1e kDa" % (M_NP*1000 * mg_2_kDa)
+print("Mass of the NP: %1.1e kDa" % (M_NP*1000 * mg_2_kDa))
 
 C_NP = args.C_NP # mg/ml = g/l
 
@@ -126,7 +126,7 @@ V_box_1NP *= pow(1E9,3)      # nm3
 
 L_box_1NP = pow(V_box_1NP, 1./3) # nm
 
-print "Lenght of the experimental box: %1.1f nm" % L_box_1NP
+print("Lenght of the experimental box: %1.1f nm" % L_box_1NP)
 
 
 ''' Nombre total (final) de molecules '''
@@ -175,8 +175,8 @@ N_Ref[0] = int(C_Prot[0] / M[0] / ml_2_nm3 * V_box_1NP )
 N_Ref[1] = int(C_Prot[1] / M[1] / ml_2_nm3 * V_box_1NP )
 N_Ref[2] = int(C_Prot[2] / M[2] / ml_2_nm3 * V_box_1NP )
 
-print "[Exp] Number of proteins/NP: "
-print N_Ref
+print("[Exp] Number of proteins/NP: ")
+print(N_Ref)
 
 N_min = [0]*3
 
@@ -184,8 +184,8 @@ N_min[0] = int(N_Ref[0] * V / V_box_1NP)
 N_min[1] = int(N_Ref[1] * V / V_box_1NP)
 N_min[2] = int(N_Ref[2] * V / V_box_1NP)
 
-print "[Sim] Minimum number of 'free' proteins in simulation box: "
-print N_min
+print("[Sim] Minimum number of 'free' proteins in simulation box: ")
+print(N_min)
 
 
 normFactor = 0.
@@ -208,7 +208,7 @@ else:
 	P2 = 0.
 P3 = 1 - (P1 + P2)
 
-print "[Sim] Proportions of each protein:\n %1.2f %1.2f %1.2f" % (P1, P2, P3)
+print("[Sim] Proportions of each protein:\n %1.2f %1.2f %1.2f" % (P1, P2, P3))
 
 ''' restore the masses to the original units '''
 M  = [args.M1,  args.M2,  args.M3]   # Massa de les molecules '''
@@ -217,8 +217,8 @@ Lreaction = L*0.8
 Lmin = (L - Lreaction)/2
 Lmax = L - Lmin
 
-print "[Sim] Box geometry:"
-print "Lbox ", L, "nm Lreaction ", Lreaction, "nm boundaries ", Lmin, Lmax
+print("[Sim] Box geometry:")
+print("Lbox ", L, "nm Lreaction ", Lreaction, "nm boundaries ", Lmin, Lmax)
 #print("Volume: %1.3e L" % (V * (1e-8)**3))
 
 Rmax = 0.
@@ -308,7 +308,7 @@ while 1:
 
 #print nReaction, nReactionRef
 
-print "[Sim] Number of accepted molecules: ", N
+print("[Sim] Number of accepted molecules: ", N)
 
 f1 = open(fileName,'w')                     # arxiu de sortida: init.dat
 f1.write('%d\t%f\t%f\t%d\t%f\t%f\t%f\t%d\t%d\t%d\t\n' % (N+1, args.C_PBS, args.K_pp, args.EpsDiag, L, V, L_box_1NP, N_Ref[0], N_Ref[1], N_Ref[2])) # capc,alera de l'arxiu
