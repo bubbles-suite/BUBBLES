@@ -18,16 +18,14 @@ int main ( int argc, char * argv[] )
 		printf("Starting simulation with %d particles\n", N);
 	
 	/** Create the file that contains all the coordinates with all the frames of the movie */
-	FILE * movie1, * movie2;
+	FILE * movie;
 	char filename[100];
 	snprintf(filename, sizeof(filename), "%s%s%d%s", root, "results/movie/movie_run", restartIndex, ".xyz");
-	//movie1 = fopen(filename,"w");
 	snprintf(filename, sizeof(filename), "%s%s", root, "results/movie/movie.xyz");
-	if(restart) movie2 = fopen(filename,"a");    /// open in append mode
-	else        movie2 = fopen(filename,"w");    /// open in overwrite mode
+	if(restart) movie = fopen(filename,"a");    /// open in append mode
+	else        movie = fopen(filename,"w");    /// open in overwrite mode
 	
-	//if (movie1 == NULL || movie2 == NULL) {
-	if (movie2 == NULL) {
+	if (movie == NULL) {
 		printf("Error: file movie.xyz could not be opened.\n");
 		exit(1);
 	}
@@ -117,7 +115,7 @@ int main ( int argc, char * argv[] )
 	if(!restart) {
 		/// Add the first frame with the initial configuration to the movie file
 		util_addXYZframe(movieLog);    
-		util_addXYZframe(movie2); 
+		util_addXYZframe(movie); 
 		
 		/////////////////////// SET VERLET LIST UPDATE PERIOD //////////////
 		
@@ -127,7 +125,6 @@ int main ( int argc, char * argv[] )
 		////////////////// FAST EQUILIBRATE INIT CONFIG ////////////////////
 		
 		/** Run the simulation for a number of steps of equilibration, without adsorption */
-		//for (t = 0; t < berendsenTime; ++t) {
 		for (t = 0; t < equilTime; ++t) {
 			/// OLD: Integrator with Berendsen thermostat to set T0 rapidly
 			//verlet_integrateBerendsenNVT(); 
@@ -162,7 +159,6 @@ int main ( int argc, char * argv[] )
 				
 				util_countAdsorbed();
 				util_countInside();
-				//util_setBuffer_Equil();
 				if(constantConcentration)
 					util_setBuffer();
 			}
@@ -172,8 +168,7 @@ int main ( int argc, char * argv[] )
 		
 		fflush(timeseries);
 		
-		/// Period of Verlet List updates, no need to check maximum displacements anymore. Take a 60% for security
-		//updateVerletListPeriod = berendsenTime * .66 / verletlistcount;
+		/// Period of Verlet List updates, no need to check maximum displacements anymore. Take a 66% for security
 		updateVerletListPeriod = equilTime * .66 / verletlistcount;
 		if(verbose)
 			printf("listcouted %d times. Update period is: %d\n",verletlistcount,updateVerletListPeriod);
@@ -231,15 +226,12 @@ int main ( int argc, char * argv[] )
 				
 				/// Append to adsorption profile
 				util_printAdsorbed(t*dt,adsorption);
-				
-				/// Save movie frame. Warning! it is very slow
-				//util_addXYZframe(movie2);
 			}
 			
 			/// Save movie frame. Warning! it is very slow and disk consuming
 			if(t % moviePeriod == 0) {
 				cudaMemcpy (Coord, dev_Coord, N*sizeof(float4), cudaMemcpyDeviceToHost);
-				util_addXYZframe(movie2);
+				util_addXYZframe(movie);
 			}
 			
 			///save logscale data
@@ -331,7 +323,7 @@ int main ( int argc, char * argv[] )
 			cudaMemcpy (Coord, dev_Coord, N*sizeof(float4), cudaMemcpyDeviceToHost);
 			
 			/// Compute the number of adsorbed particles on-the-fly
-			/// THIS COULD ALSO BE DONE INSIDE THE GPU!
+			/// TDOD: THIS COULD ALSO BE DONE INSIDE THE GPU!
 			int adsorbed = util_countAdsorbed();
 			
 			if(verbose)
@@ -348,7 +340,7 @@ int main ( int argc, char * argv[] )
 			cudaMemcpy (Coord, dev_Coord, N*sizeof(float4), cudaMemcpyDeviceToHost);
 			
 			/// Compute the number of adsorbed particles on-the-fly
-			/// THIS COULD ALSO BE DONE INSIDE THE GPU!
+			/// TODO: THIS COULD ALSO BE DONE INSIDE THE GPU!
 			int adsorbed = util_countAdsorbed();
 			
 			util_countInside();
@@ -407,7 +399,7 @@ int main ( int argc, char * argv[] )
 			cudaMemcpy (Coord, dev_Coord, N*sizeof(float4), cudaMemcpyDeviceToHost);
 			
 			/// Compute the number of adsorbed particles on-the-fly
-			/// THIS COULD ALSO BE DONE INSIDE THE GPU!
+			/// TODO: THIS COULD ALSO BE DONE INSIDE THE GPU!
 			util_countAdsorbed();
 			util_countInside();
 			if(constantConcentration)
@@ -419,7 +411,7 @@ int main ( int argc, char * argv[] )
 		/// Save movie frame. Warning! it is very slow and disk consuming
 		if(t % moviePeriod == 0) {
 			cudaMemcpy (Coord, dev_Coord, N*sizeof(float4), cudaMemcpyDeviceToHost);
-			util_addXYZframe(movie2);
+			util_addXYZframe(movie);
 		}
 	}
 	
@@ -451,8 +443,7 @@ int main ( int argc, char * argv[] )
 	util_calcPrintRdf(countRdf); 
 	
 	/// Free memory and close files
-	//fclose(movie1);
-	fclose(movie2);
+	fclose(movie);
 	fclose(adsorption);
 	fclose(timeseries);
 	
@@ -464,6 +455,7 @@ int main ( int argc, char * argv[] )
 
 
 __global__ void gpu_GenerateVerletListSync_kernel(
+	char * type,
 	float4 * dPos, 
 	int * vlist, 
 	unsigned char * nlist, 
@@ -520,12 +512,11 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 			
 			
 			/// neighbor list condition
-			if ( dev_vec_rv2[(int)tex1Dfetch(type_tex,idx)] > d.x*d.x + d.y*d.y + d.z*d.z ) {
-				/// save neighbor id to verlet list and increase the number of neighbors
-				vlist[neig*N + idx] = id;
-				//vlist[idx*MAXNEIG + neig] = id;
-				++ neig;
-			}
+			if (dev_vec_rv2[type[idx]] > d.x * d.x + d.y * d.y + d.z * d.z) {
+                /// Save neighbor ID to the Verlet list and increase the number of neighbors
+                vlist[neig * N + idx] = id;
+                ++neig;
+            }
 		}
 		
 		/// Even if only one thread was succesful, all the other threads wait for it to finish
@@ -570,11 +561,10 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 			
 			
 			/// neighbor list condition
-			if ( dev_vec_rv2[(int)tex1Dfetch(type_tex,idx)] > d.x*d.x + d.y*d.y + d.z*d.z ) 
+			if ( dev_vec_rv2[type[idx]] > d.x*d.x + d.y*d.y + d.z*d.z ) 
 			{
 				/// save neighbor id to verlet list and increase the number of neighbors
 				vlist[neig*N + idx] = id;
-				//vlist[idx*MAXNEIG + neig] = id;
 				++ neig;
 			}
 		}
@@ -589,7 +579,7 @@ __global__ void gpu_GenerateVerletListSync_kernel(
 
 /// UNDER CONSTRUCTION ///
 __global__ void gpu_GenerateVerletListAsync_kernel(
-	float4 * dPos, 
+	float4 * Coord, 
 	int * vlist, 
 	unsigned char * nlist, 
 	int N,
@@ -598,12 +588,12 @@ __global__ void gpu_GenerateVerletListAsync_kernel(
 	int idx = offset + threadIdx.x;
        
 	/// save reference particle position in register
-	float4 tPos = tex1Dfetch(Coord_tex,idx);
+	float4 tPos = Coord[idx];
 	unsigned char neig = 0;
 	
 	for(int i = 0; i < N; ++ i)
 	{
-		float4 d = tPos - tex1Dfetch(Coord_tex,i);
+		float4 d = tPos - Coord[i];
 		
 		/// Image-corrected relative pair position 
 		if(d.x > dev_hL)
@@ -623,7 +613,6 @@ __global__ void gpu_GenerateVerletListAsync_kernel(
 		 
 		if (dev_rv2 > d.x*d.x + d.y*d.y + d.z*d.z) {
 			vlist[neig*N + idx] = i;
-			//vlist[idx*MAXNEIG + neig] = i;
 			++ neig;
 		}
 	 }
@@ -645,7 +634,7 @@ void util_calcVerletList (void)
 	
 	/** cal indiciar el nombre de: 
 	 * <<< threads, blocks, memoria cache = numThreadsPerBlock*sizeof(float4) >>> */
-	gpu_GenerateVerletListSync_kernel <<<nblocks, nthreads, cacheMem>>> (dev_Coord,dev_vlist,dev_nlist,N); 
+	gpu_GenerateVerletListSync_kernel <<<nblocks, nthreads, cacheMem>>> (dev_type,dev_Coord,dev_vlist,dev_nlist,N); 
 	if(debug)
 		CudaCheckError();
 	
@@ -760,13 +749,14 @@ __global__ void gpu_RNG_setup (
 __global__ void gpu_RNG_generate ( 
 	curandState* globalState, 
 	float4 * Rnd, 
+	char * type,
 	int N ) 
 {
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
     
     while(ind < N) {
 	    
-	    int typei = (int)tex1Dfetch(type_tex,ind);
+	    int typei = type[ind];
 	    
 	    __syncthreads();
 	    
@@ -1109,7 +1099,7 @@ void init_config(char * filename, int filenameln)
 		fscanf(file,"%d\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\n",&typei,&xi,&yi,&zi,&Ri,&Rsi,&Mi,&epsi,&epsi2,&epsi3);
 		
 		type[i] = typei;
-		
+		//printf("Type[i] %d;",type[i]);
 		num[typei] ++;
 		
 		/// Count how many particles of each type
@@ -1119,6 +1109,7 @@ void init_config(char * filename, int filenameln)
 		
 		R[typei] = Ri;
 		Rs[typei] = Rsi;
+		
 		M[typei] = Mi;
 		sqrM[typei] = sqrt(Mi);
 		EpsNP[typei] = epsi;
@@ -1182,7 +1173,7 @@ void init_config(char * filename, int filenameln)
 	for(i = 0; i < ntypes; ++i)
 		if(num[i] > 0 && maxR < Rs[i])
 			maxR = Rs[i];
-	
+	printf("maxR %f Rs:%f,%f,%f\n",maxR,Rs[0],Rs[1],Rs[2]);
 	/// Cutoff d'interaccio proteina-proteina
 	for(typei = 0; typei < ntypes; ++typei){
 		vec_rc2[typei] = (Rs[typei] + maxR) + Rs[typei];
@@ -1318,13 +1309,13 @@ void util_loadConfig (void)
 }
 
 
-__global__ void gpu_divideAccMass_kernel (float4 * Acc, int N) 
+__global__ void gpu_divideAccMass_kernel (char * type, float4 * Acc, int N) 
 {
 	int i = blockIdx.x*blockDim.x+threadIdx.x;
 	
 	while(i < N)
 	{
-		Acc[i] /= dev_M[(int)tex1Dfetch(type_tex,i)];
+		Acc[i] /= dev_M[type[i]];
 		
 		i += blockDim.x*gridDim.x;
 	}
@@ -1346,7 +1337,10 @@ __global__ void gpu_addRandomForces_kernel (
 }
 
 __global__ void gpu_forceThreadPerAtomTabulatedEquilSync_kernel (
+	char * type,
+	float4 * Coord,
 	float4 * Acc,
+	float * tableF_rep,
 	unsigned char * nlist, 
 	int * vlist,
 	int N) 
@@ -1358,9 +1352,9 @@ __global__ void gpu_forceThreadPerAtomTabulatedEquilSync_kernel (
 	unsigned char neighbors = nlist[i];
 	
 	/// eficient read, stored in texture cache for later scattered reads
-	float4 ri = tex1Dfetch(Coord_tex,i);
+	float4 ri = Coord[i];
 	
-	int typei = (int)tex1Dfetch(type_tex,i);
+	int typei = type[i];
 	
 	float4 acc = {0.0f, 0.0f, 0.0f, 0.f};
 	
@@ -1369,10 +1363,9 @@ __global__ void gpu_forceThreadPerAtomTabulatedEquilSync_kernel (
 	{
 		/// Index of the neighbor. Coalesced read
 		int j = vlist[neig*N + i];
-		//int j = vlist[i*MAXNEIG + neig];
 		
 		/// Distance between 'i' and 'j' particles. RANDOM read
-		float4 rj = tex1Dfetch(Coord_tex, j);
+		float4 rj = Coord[j];
 		float4 rij = rj - ri;
 		
 		rij.x -= dev_L * rintf(rij.x / dev_L);
@@ -1391,7 +1384,7 @@ __global__ void gpu_forceThreadPerAtomTabulatedEquilSync_kernel (
 			/// Compute the acceleration in each direction
 			/// Nomes per a les acceleracions de la particula del block actual
 			/// Falta dividir per la massa
-			acc += - tex1Dfetch(tableF_rep_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*((int)tex1Dfetch(type_tex,j) + ntypes*typei))) * rij;
+			acc += - tableF_rep[(int)(rij.w*100 + 0.5f) + dev_ntable*(type[j] + ntypes*typei)] * rij;
 		}
 	}
 	
@@ -1403,7 +1396,12 @@ __global__ void gpu_forceThreadPerAtomTabulatedEquilSync_kernel (
 
 
 __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
+	char * type, 
+	float4 * Coord,
 	float4 * Acc,
+	float * tableF_rep,
+	float * tableF_att_symm,
+	float * tableF_att_noSymm,
 	unsigned char * nlist, 
 	int * vlist,
 	int N) 
@@ -1415,9 +1413,9 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 	unsigned char neighbors = nlist[i];
 	
 	/// eficient read, stored in texture cache for later scattered reads
-	float4 ri = tex1Dfetch(Coord_tex,i);
+	float4 ri = Coord[i];
 	
-	int typei = (int)tex1Dfetch(type_tex,i);
+	int typei = type[i];
 	
 /// Activate with soft-corona interactions
 #ifdef SC
@@ -1433,10 +1431,9 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 	{
 		/// Index of the neighbor. Coalesced read
 		int j = vlist[neig*N + i];
-		//int j = vlist[i*MAXNEIG + neig];
 		
 		 /// Distance between 'i' and 'j' particles. RANDOM read
-		float4 rj = tex1Dfetch(Coord_tex, j);
+		float4 rj = Coord[j];
 		float4 rij = rj - ri;
 		
 		float pair_force_symm = 0.f;
@@ -1455,12 +1452,12 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 		/// Skip current particle if not witihin cutoff
 		if ( rij.w < dev_vec_rc2[typei])
 		{
-			int typej = (int)tex1Dfetch(type_tex,j);
+			int typej = type[j];
 			
 			/** If the pair is interacting...
 			 * Calculate the magnitude of the force DIVIDED BY THE DISTANCE */
 			/// Repulsive interaction force
-			pair_force_symm = - tex1Dfetch(tableF_rep_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			pair_force_symm = - tableF_rep[(int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)];
 			
 #ifdef SC
 			float4 dj = rj - dev_xyzNP;
@@ -1468,22 +1465,12 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 			
 			/// Attractive interaction force, depends on the distances of i and j to te NP center
 			/// Symmetric part
-			//float expo = pow(dev_R[typei]*dev_R[typej]/(di.w*dj.w), ALPHA);
-			//float expo = exp(-di.w*dj.w/(dev_K2));
-			//float expo = exp(-(di.w + dj.w)/dev_K);
 			float expo = exp(-di.w*dj.w/(dev_K*dev_K));
 			
-			pair_force_symm += expo * tex1Dfetch(tableF_att_symm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			pair_force_symm += expo * tableF_att_symm[(int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)];
 			
 			/// Non-symmetric part
-			//pair_force_asymm = expo/di.w * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
-			
-			//pair_force_asymm = - expo*dj.w/(dev_K2) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
-			
-			//pair_force_asymm = - expo/dev_K * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
-			
-			//pair_force_asymm = - expo*sqrtf(dj.w/di.w)/(2.f*dev_K) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
-			pair_force_asymm = - expo*di.w/(dev_K*dev_K) * tex1Dfetch(tableF_att_noSymm_tex,((int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)));
+			pair_force_asymm = - expo*di.w/(dev_K*dev_K) * tableF_att_noSymm[(int)(rij.w*100 + 0.5f) + dev_ntable*(typej + ntypes*typei)];
 #endif
 		
 		/// Compute the acceleration in each direction
@@ -1504,7 +1491,10 @@ __global__ void gpu_forceThreadPerAtomTabulatedSync_kernel (
 
 /// *** STILL UNDER CONSTRUCTION *** ///
 __global__ void gpu_forceThreadPerAtomTabulatedAsync_kernel (
+	char * type,
+	float4 * Coord,
 	float4 * Acc,
+	float * tableF_rep,
 	unsigned char * nlist, 
 	int * vlist,
 	int N,
@@ -1518,10 +1508,10 @@ __global__ void gpu_forceThreadPerAtomTabulatedAsync_kernel (
 	/// number of neighbors of current particle, coalesced read
 	unsigned char neighbors = nlist[i];
 	
-	int typei = (int)tex1Dfetch(type_tex,i);
+	int typei = type[i];
 	
 	/// eficient read, stored in texture cache for later scattered reads
-	float4 ri = tex1Dfetch(Coord_tex,i);
+	float4 ri = Coord[i];
 	
 	float4 di = ri - dev_xyzNP;
 	/// Distance to the center of the NP
@@ -1535,9 +1525,8 @@ __global__ void gpu_forceThreadPerAtomTabulatedAsync_kernel (
 		/// Index of the neighbor. Coalesced read
 		//int j = vlist[neig*N + i];
 		
-		/// Distance between 'i' and 'j' particles. Warning: Scattered read
-		float4 rj = tex1Dfetch(Coord_tex,vlist[neig*N + i]); 
-		//float4 rj = tex1Dfetch(Coord_tex,vlist[i*MAXNEIG + neig]); /// Distance between 'i' and 'j' particles. RANDOM read
+		/// Distance between 'i' and 'j' particles. WARNING: Scattered (random) read
+		float4 rj = Coord[vlist[neig*N + i]]; 
 		float4 rij = ri - rj;
 		
 		/// Image-corrected relative pair position 
@@ -1560,13 +1549,12 @@ __global__ void gpu_forceThreadPerAtomTabulatedAsync_kernel (
 		rij.w = sqrtf(rij.x*rij.x + rij.y*rij.y + rij.z*rij.z);
 		
 		/// Skip current particle if not witihin cutoff
-		//if(rij.w < dev_rc2)
 		if(rij.w < dev_vec_rc2[typei])
 		{
 			/** If the pair is interacting...
 			 * Calculate the magnitude of the force DIVIDED BY THE DISTANCE */
 			/// Repulsive interaction force
-			pair_force = tex1Dfetch(tableF_rep_tex,(int)(rij.w*100 + 0.5f));
+			pair_force = tableF_rep[(int)(rij.w*100 + 0.5f)];
 #ifdef SC
 			float4 dj = rj - dev_xyzNP;
 			dj.w = sqrtf(dj.x*dj.x + dj.y*dj.y + dj.z*dj.z) - dev_R_NP;
@@ -1620,7 +1608,7 @@ __device__ float gpu_calcPNPForceEquil (float eps, float sigma2, float r2)
 }
 
 /// NOT IN USE
-__global__ void gpu_forceNP_kernel (float4 * Acc, int N)
+__global__ void gpu_forceNP_kernel (char * type, float4 * Coord, float4 * Acc, int N)
 {
 	float r2, r;
 	float4 acc, Coords;
@@ -1639,14 +1627,14 @@ __global__ void gpu_forceNP_kernel (float4 * Acc, int N)
 		acc = make_float4(0.f,0.f,0.f,0.f);
 		
 		/// Type of the current particle
-		int typei = (int)tex1Dfetch(type_tex,i);
+		int typei = type[i];
 		
 		/// Properties of the given type
 		EpsNPi = dev_EpsNP[typei];
 		Ri = dev_R[typei];
 		
 		/// Read partice positions. Coalesced read
-		Coords = tex1Dfetch(Coord_tex,i);
+		Coords = Coord[i];
 		
 		Coords.x -= dev_x_NP;
 		Coords.y -= dev_y_NP;
@@ -1686,7 +1674,7 @@ __global__ void gpu_forceNP_kernel (float4 * Acc, int N)
 	}
 }
 
-__global__ void gpu_forceNP_DLVO_kernel (float4 * Acc, int N)
+__global__ void gpu_forceNP_DLVO_kernel (char * type, float4 * Coord, float4 * Acc, int N)
 {
 	
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1698,7 +1686,7 @@ __global__ void gpu_forceNP_DLVO_kernel (float4 * Acc, int N)
 			__syncthreads();
 		
 		/// Type of the current particle
-		int typei = (int)tex1Dfetch(type_tex,i);
+		int typei = type[i];
 		
 		/// Properties of the given type
 		float EpsNPi = dev_EpsNP[typei];
@@ -1706,7 +1694,7 @@ __global__ void gpu_forceNP_DLVO_kernel (float4 * Acc, int N)
 		float EpsEDLi = dev_EpsEDL[typei];
 		
 		/// Read partice positions. Coalesced read
-		float4 Coords = tex1Dfetch(Coord_tex,i);
+		float4 Coords = Coord[i];
 		
 		Coords.x -= dev_x_NP;
 		Coords.y -= dev_y_NP;
@@ -1753,7 +1741,7 @@ __global__ void gpu_forceNP_DLVO_kernel (float4 * Acc, int N)
 }
 
 
-__global__ void gpu_forceNP_Equil_kernel (float4 * Acc, int N)
+__global__ void gpu_forceNP_Equil_kernel (char * type, float4 * Coord, float4 * Acc, int N)
 {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	
@@ -1764,14 +1752,14 @@ __global__ void gpu_forceNP_Equil_kernel (float4 * Acc, int N)
 			__syncthreads();
 		
 		/// Type of the current particle
-		int typei = (int)tex1Dfetch(type_tex,i);  
+		int typei = type[i];  
 		
 		/// Properties of the given type
 		float EpsNPi = dev_EpsNP[typei];
 		float Ri = dev_R[typei];
 		
 		/// Read partice positions. Coalesced read
-		float4 Coords = tex1Dfetch(Coord_tex,i);  
+		float4 Coords = Coord[i];  
 		
 		/// Coordinates relative to the center of the NP
 		Coords.x -= dev_x_NP;
@@ -1825,23 +1813,23 @@ void verlet_calcForce (bool equil)
 	
 	/// Check the force over each particle due to pair interactions with neighbour particles. Omit the NP
 	if(equil) {
-		gpu_forceThreadPerAtomTabulatedEquilSync_kernel <<<nblocks,nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N);
+		gpu_forceThreadPerAtomTabulatedEquilSync_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_nlist, dev_vlist, N);
 		if(debug)
 		CudaCheckError();
 		
 		if(nblocks*nthreads < N) {      /// Asynchronous block
-			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N, nblocks*nthreads);
+			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_nlist, dev_vlist, N, nblocks*nthreads);
 			if(debug)
 		CudaCheckError();
 		}
 	}
 	else {
-		gpu_forceThreadPerAtomTabulatedSync_kernel <<<nblocks,nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N);
+		gpu_forceThreadPerAtomTabulatedSync_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_tableF_att_symm, dev_tableF_att_noSymm, dev_nlist, dev_vlist, N);
 		if(debug)
 			CudaCheckError();
 		
 		if(nblocks*nthreads < N) {      /// Asynchronous block
-			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N, nblocks*nthreads);
+			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_nlist, dev_vlist, N, nblocks*nthreads);
 			if(debug)
 				CudaCheckError();
 		}
@@ -1856,9 +1844,9 @@ void verlet_calcForce (bool equil)
 	
 	/// Add to the forces the contribution of the NP in a separate calculation
 	if(equil)
-		gpu_forceNP_Equil_kernel <<<nblocks,nthreads>>> (dev_Acc, N);
+		gpu_forceNP_Equil_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, N);
 	else
-		gpu_forceNP_DLVO_kernel <<<nblocks,nthreads>>> (dev_Acc, N);
+		gpu_forceNP_DLVO_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, N);
 	
 	if(debug)
 		CudaCheckError();
@@ -1883,12 +1871,12 @@ void verlet_calcForceEquil (void)
 	int nblocks = (N + nthreads - 1) / nthreads; /// Synchronous blocks
 	
 	/// Check the force over each particle due to pair interactions with neighbour particles. Omit the NP
-	gpu_forceThreadPerAtomTabulatedEquilSync_kernel <<<nblocks,nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N);
+	gpu_forceThreadPerAtomTabulatedEquilSync_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_nlist, dev_vlist, N);
 	if(debug)
 		CudaCheckError();
 	
 	if(nblocks*nthreads < N) {      /// Asynchronous block
-		gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N, nblocks*nthreads);
+		gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_nlist, dev_vlist, N, nblocks*nthreads);
 		if(debug)
 		CudaCheckError();
 	}
@@ -1899,7 +1887,7 @@ void verlet_calcForceEquil (void)
 	}
 	
 	/// Add to the forces the contribution of the NP in a separate calculation
-	gpu_forceNP_Equil_kernel <<<nblocks,nthreads>>> (dev_Acc, N);
+	gpu_forceNP_Equil_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, N);
 	
 	if(debug)
 		CudaCheckError();
@@ -1926,53 +1914,40 @@ void verlet_calcForceLangevin (bool equil)
 	
 	/// Check the force over each particle due to pair interactions with neighbour particles. Omit the NP
 	if(equil) {
-		gpu_forceThreadPerAtomTabulatedEquilSync_kernel <<<nblocks,nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N);
+		gpu_forceThreadPerAtomTabulatedEquilSync_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_nlist, dev_vlist, N);
 		if(debug)
 		CudaCheckError();
 		
 		if(nblocks*nthreads < N) {      /// Asynchronous block
-			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N, nblocks*nthreads);
+			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_nlist, dev_vlist, N, nblocks*nthreads);
 			if(debug)
 		CudaCheckError();
 		}
 	}
 	else {
-		gpu_forceThreadPerAtomTabulatedSync_kernel <<<nblocks,nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N);
+		gpu_forceThreadPerAtomTabulatedSync_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_tableF_att_symm, dev_tableF_att_noSymm, dev_nlist, dev_vlist, N);
 		if(debug)
 		CudaCheckError();
 		
 		if(nblocks*nthreads < N) {      /// Asynchronous block
-			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_Acc, dev_nlist, dev_vlist, N, nblocks*nthreads);
+			gpu_forceThreadPerAtomTabulatedAsync_kernel <<<1,N-nblocks*nthreads>>> (dev_type, dev_Coord, dev_Acc, dev_tableF_rep, dev_nlist, dev_vlist, N, nblocks*nthreads);
 			if(debug)
 		CudaCheckError();
 		}
 	}
 	
-	//if(calc_thermo) {
-	//	CudaSafeCall(cudaMemset(dev_Epot_NP, 0, sizeof(float)));
-	//	CudaSafeCall(cudaMemset(dev_P_NP,    0, sizeof(float)));
-	//}
-	//force_wall1_kernel <<<(N+191)/192,192>>> (/*dev_z,*/ dev_R, dev_M, dev_EpsNP, dev_az, N, Lz, epsNP, T0);	
-	//force_wall2_kernel <<<(N+191)/192,192>>> (/*dev_z,*/ dev_R, dev_M, dev_EpsNP, dev_az, N, Lz, epsNP, T0);
-	
 	/// Add to the forces the contribution of the NP in a separate calculation
 	if(equil)
-		gpu_forceNP_Equil_kernel <<<nblocks,nthreads>>> (dev_Acc, N);
+		gpu_forceNP_Equil_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, N);
 	else 
-		gpu_forceNP_DLVO_kernel <<<nblocks,nthreads>>> (dev_Acc, N);
-	//CudaCheckError();
+		gpu_forceNP_DLVO_kernel <<<nblocks,nthreads>>> (dev_type, dev_Coord, dev_Acc, N);
 	
-	//util_generateRandomForces();
-	//CudaCheckError();
 	
-	gpu_RNG_generate <<<nblocks,nthreads>>> ( devStates, dev_Rnd, N); 
+	gpu_RNG_generate <<<nblocks,nthreads>>> ( devStates, dev_Rnd, dev_type, N); 
 	
 	gpu_addRandomForces_kernel <<<nblocks,nthreads>>> (dev_Acc, dev_Rnd, N);
 	if(debug)
 		CudaCheckError();
-	
-//	gpu_divideAccMass_kernel <<<nblocks,nthreads>>> (dev_Acc, N);
-//	CudaCheckError();
 	
 	/// Divide force over mass to obtain accelerations
 	/// Now, It is done at the end of force_NP_kernel! 
@@ -1981,7 +1956,6 @@ void verlet_calcForceLangevin (bool equil)
 
 void util_calcPPForceTable (void) 
 {
-	//ntable = (int)(rc * 10000 + 1);
 	ntable = (int)(rc*rc * 100 + 1);
 	
 	CudaSafeCall(cudaMemcpyToSymbol(dev_ntable, (&ntable), sizeof(int)));
@@ -2021,7 +1995,6 @@ void util_calcPPForceTable (void)
 				
 				tableF_rep[index] = 24 * pow(d/r,24) / (r*r) + 2. * 30. / (r * d * pow(2*cosh(0.5 * 30 * (r - D)/d), 2));
 				
-				//tableF_att_symm[index] = eps * (r - 1.1*d) / (w*w) * exp(-pow(r - 1.1*d,2)/(2*w*w)) / r;
 				tableF_att_symm[index] = -eps * (r - 1.1*d)/(w*w) * exp(-pow(r - 1.1*d,2)/(2*w*w)) / r;
 				
 				tableF_att_noSymm[index] = -eps * exp(-pow(r - 1.1*d,2)/(2*w*w));
@@ -2159,13 +2132,7 @@ void initialize (int argc, char * argv[])
 	CudaSafeCall(cudaMemcpy( dev_type,  type,  N*sizeof(char),   cudaMemcpyHostToDevice ));
 	
 	CudaSafeCall(cudaMemcpy(dev_gamma, Gamma, N*sizeof(float), cudaMemcpyHostToDevice));
-	
-	//CudaSafeCall(cudaMemcpy( dev_stopMol,  stopMol,  N*sizeof(int),   cudaMemcpyHostToDevice ));
-	
-	/// Assign textures
-	CudaSafeCall(cudaBindTexture(NULL, Coord_tex, dev_Coord, N*sizeof(float4)));
-	CudaSafeCall(cudaBindTexture(NULL, type_tex,  dev_type,  N*sizeof(char)));
-	
+
 	/// Set constant parameters in GPU
 	CudaSafeCall(cudaMemcpyToSymbol(dev_N, &N, sizeof(int)));
 	
@@ -2213,18 +2180,11 @@ void initialize (int argc, char * argv[])
 //	CudaSafeCall(cudaMemcpy(dev_tableU_rep, tableU_rep, ntable*sizeof(float), cudaMemcpyHostToDevice));
 //	CudaSafeCall(cudaMemcpy(dev_tableU_att, tableU_att, ntable*sizeof(float), cudaMemcpyHostToDevice));
 	
-//	CudaSafeCall(cudaBindTexture(NULL, tableU_rep_tex, dev_tableU_rep, ntable*sizeof(float)));
-//	CudaSafeCall(cudaBindTexture(NULL, tableU_att_tex, dev_tableU_att, ntable*sizeof(float)));
-	
 	/// Force tables
 	CudaSafeCall(cudaMemcpy(dev_tableF_rep,        tableF_rep,        ntypes*ntypes*ntable*sizeof(float), cudaMemcpyHostToDevice));
 	CudaSafeCall(cudaMemcpy(dev_tableF_att_symm,   tableF_att_symm,   ntypes*ntypes*ntable*sizeof(float), cudaMemcpyHostToDevice));
 	CudaSafeCall(cudaMemcpy(dev_tableF_att_noSymm, tableF_att_noSymm, ntypes*ntypes*ntable*sizeof(float), cudaMemcpyHostToDevice));
-	
-	CudaSafeCall(cudaBindTexture(NULL, tableF_rep_tex,        dev_tableF_rep,        ntypes*ntypes*ntable*sizeof(float)));
-	CudaSafeCall(cudaBindTexture(NULL, tableF_att_symm_tex,   dev_tableF_att_symm,   ntypes*ntypes*ntable*sizeof(float)));
-	CudaSafeCall(cudaBindTexture(NULL, tableF_att_noSymm_tex, dev_tableF_att_noSymm, ntypes*ntypes*ntable*sizeof(float)));
-	
+
 	////////////////////////// Initialization //////////////////////////
 	init_rdf() ;
 	
@@ -2232,7 +2192,6 @@ void initialize (int argc, char * argv[])
 	util_calcVerletList();
 	
 	/// Then compute the forces, before first Coord and Vel update
-	//verlet_calcForce(TRUE);
 	verlet_calcForceLangevin(TRUE);
 }
 
@@ -2264,7 +2223,6 @@ __global__ void gpu_updateVelocitiesLangevin_kernel (
 	{
 		Vel[tid] += Acc[tid] * dev_hdt;
 		Vel[tid] /= 1.f + gamma[tid] * dev_hdt;
-		//Vel[tid] /= 1.f + dev_hdt;
 		
 		tid += blockDim.x*gridDim.x;
 	}
@@ -2273,7 +2231,6 @@ __global__ void gpu_updateVelocitiesLangevin_kernel (
 __global__ void gpu_updateVelocitiesLangevinRelax_kernel (
 	float4 * Vel, 
 	float4 * Acc, 
-//	int * stopMol,
 	float * dev_gamma,
 	int N) 
 {
@@ -2829,7 +2786,6 @@ __global__ void gpu_updateVelocitiesPositionsLangevinRelax_kernel (
 	float4 * Acc,
 	float4 * CoordVerlet,
 	float4 * Coord,
-//	int * stopMol,
 	int * isOutsideClosed,
 	float * dev_gamma,
 	int N) 
@@ -3127,6 +3083,7 @@ __global__ void gpu_thermostatBerendsen_kernel (
 
 
 __global__ void gpu_partialTemp_kernel (
+	char * type, 
 	float4 * Vel, 
 	int N, 
 	double * partialT) 
@@ -3143,7 +3100,7 @@ __global__ void gpu_partialTemp_kernel (
 		float4 vel = Vel[tid];   /// Read velocity from global memory
 		
 		vel.w = vel.x*vel.x + vel.y*vel.y + vel.z*vel.z;       /// Compute square sum of components
-		vel.w *= dev_M[tex1Dfetch(type_tex,tid)];              /// Multiply by the mass
+		vel.w *= dev_M[type[tid]];              /// Multiply by the mass
 		
 		v2_cache[threadIdx.x] += vel.w;     /// Accumulate to cache
 		
@@ -3263,7 +3220,7 @@ void util_saveState (long int t)
 void util_resetThermostat (void)
 {
 	/// Compute the temperature of the system in two steps, first a block-wide reduction + thread-wide reduction
-	gpu_partialTemp_kernel <<<64,128,128*sizeof(double)>>> (dev_Vel, N, dev_partialT);
+	gpu_partialTemp_kernel <<<64,128,128*sizeof(double)>>> (dev_type, dev_Vel, N, dev_partialT);
 	if(debug)
 		CudaCheckError();
 	gpu_totalTemp_kernel   <<< 1, 64, 64*sizeof(double)>>> (N, dev_partialT, dev_T);
@@ -3309,7 +3266,7 @@ void verlet_integrateLangevinNVTrelax (bool updateVerletList)
 	int nblocks = (N + nthreads - 1) / nthreads;
 	
 	/// First half-step
-	gpu_updateVelocitiesPositionsLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, /* dev_stopMol, */ dev_isOutsideClosed, dev_gamma, N);
+	gpu_updateVelocitiesPositionsLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_CoordVerlet, dev_Coord, dev_isOutsideClosed, dev_gamma, N);
 	
 	if(debug)
 		CudaCheckError();
@@ -3320,7 +3277,7 @@ void verlet_integrateLangevinNVTrelax (bool updateVerletList)
 	verlet_calcForceLangevin (FALSE);     /// The acceleration a(t + dt) due to new positions and Force field
 	
 	/// Second half-step
-	gpu_updateVelocitiesLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, /* dev_stopMol, */ dev_gamma, N);
+	gpu_updateVelocitiesLangevinRelax_kernel <<<nblocks,nthreads>>> (dev_Vel, dev_Acc, dev_gamma, N);
 	if(debug)
 		CudaCheckError();
 }
@@ -3381,7 +3338,7 @@ void verlet_integrateBerendsenNVT (void)
 		CudaCheckError();
 	
 	/// Compute the temperature of the system in two steps, first a block-wide reduction + thread-wide reduction
-	gpu_partialTemp_kernel <<<64,128,128*sizeof(double)>>> (dev_Vel, N, dev_partialT);
+	gpu_partialTemp_kernel <<<64,128,128*sizeof(double)>>> (dev_type, dev_Vel, N, dev_partialT);
 	if(debug)
 		CudaCheckError();
 	gpu_totalTemp_kernel <<<1,64,64*sizeof(double)>>> (N, dev_partialT, dev_T);
@@ -3439,7 +3396,7 @@ __global__ void gpu_reduce_kernel (int N, float * vector, float * sum)
 
 void thermo_computeTemperature(void)
 {
-	gpu_partialTemp_kernel <<<64,128,128*sizeof(double)>>> (dev_Vel,N,dev_partialT);
+	gpu_partialTemp_kernel <<<64,128,128*sizeof(double)>>> (dev_type, dev_Vel,N,dev_partialT);
 	if(debug)
 		CudaCheckError();
 	gpu_totalTemp_kernel <<<1,64,64*sizeof(double)>>> (N,dev_partialT,dev_T);
@@ -3505,7 +3462,7 @@ void util_rescaleVelocities(int N) {
 	int nblocks = N / nthreads;                /// Only Synchronous blocks
 	
 	/// Compute the temperature of the system in two steps, first a block-wide reduction + thread-wide reduction
-	gpu_partialTemp_kernel <<<64,128,128*sizeof(double)>>> (dev_Vel, N, dev_partialT);
+	gpu_partialTemp_kernel <<<64,128,128*sizeof(double)>>> (dev_type, dev_Vel, N, dev_partialT);
 	if(debug)
 		CudaCheckError();
 	gpu_totalTemp_kernel <<<1,64,64*sizeof(double)>>> (N, dev_partialT, dev_T);
@@ -3518,7 +3475,6 @@ void util_rescaleVelocities(int N) {
 }
 
 
-// TODO: MODIFY THIS FUNCTION TO BE SCALABLE TO NTYPES OF PROTEINS
 int util_countAdsorbed(void) 
 {
 	int i, typei;
@@ -3601,7 +3557,6 @@ void util_countInside(void)
 }
 
 // TODO: THE LIMITS OF THE REACTION REGION SHOULD BE AN INPUT PARAMETER OF THE SIMULATION
-// TODO: MODIFY THIS FUNCTION TO BE SCALABLE TO NTYPES OF PROTEINS
 void util_setBuffer(void) {
 	
 	int i, typei;
@@ -3747,14 +3702,10 @@ void util_setBuffer_Equil(void) {
 		/// if it is in the reaction zone
 		else 
 			isOutsideClosed[i] = 0;
-		
-		//if(stopMol[i])
-		//	isOutsideClosed[i] = 1;
 	}
 	
 	for(int typei = 0; typei < ntypes; ++typei)
 		printf("Conc. obj. type %d: %e\t Act. Conc.: %e\n", typei, cTot[typei], cSys[typei]);
-	//printf("L %lf nInner %d nAds %d nOuter %d nBuff %lf\n", L, nInner[2], nAds[2], nOuter[2], nBuff[2]);
 	
 	CudaSafeCall(cudaMemcpy( dev_isOutsideClosed,  isOutsideClosed,  N*sizeof(int),   cudaMemcpyHostToDevice ));
 }
@@ -3778,7 +3729,6 @@ void util_applyBufferConditions(void) {
 	}
 }
 
-// TODO: MODIFY THIS FUNCTION TO BE SCALABLE TO NTYPES OF PROTEINS
 void util_fractionBound (double t) {
 	
 	/// in FCS the observation volume is ~ 1 um^3, so it is ~ (1000 nm)^3
@@ -3814,7 +3764,7 @@ void util_fractionBound (double t) {
 	fclose(myFile);
 }
 
-// TODO: MODIFY THIS FUNCTION TO BE SCALABLE TO NTYPES OF PROTEINS
+
 void util_printAdsorbed(double t, FILE * file) 
 {
 	fprintf(file,"%e\t", t);
@@ -3844,7 +3794,6 @@ void util_printAdsorbed(double t, FILE * file)
 }
 
 
-// TODO: MODIFY THIS FUNCTION TO BE SCALABLE TO NTYPES OF PROTEINS
 void util_printConcentration(double t, FILE * file) 
 {
 	fprintf(file, "%e\t", t);
